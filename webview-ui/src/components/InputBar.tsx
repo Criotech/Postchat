@@ -47,7 +47,7 @@ export function InputBar({ onSend, isThinking }: InputBarProps): JSX.Element {
           }}
           rows={1}
           placeholder="Ask about your collection..."
-          className="min-h-6 max-h-30 flex-1 resize-none bg-transparent text-sm text-vscode-inputFg placeholder:text-vscode-placeholder focus:outline-none"
+          className="min-h-6 max-h-40 flex-1 resize-none bg-transparent text-sm text-vscode-inputFg placeholder:text-vscode-placeholder focus:outline-none"
         />
 
         <button

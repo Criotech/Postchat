@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -44,6 +44,46 @@ function CodeBlock({
   );
 }
 
+const markdownComponents: Components = {
+  p(props) {
+    return <p className="my-2 whitespace-pre-wrap break-words" {...props} />;
+  },
+  ul(props) {
+    return <ul className="my-2 list-disc pl-5" {...props} />;
+  },
+  ol(props) {
+    return <ol className="my-2 list-decimal pl-5" {...props} />;
+  },
+  li(props) {
+    return <li className="my-1" {...props} />;
+  },
+  a(props) {
+    return (
+      <a
+        className="text-vscode-linkFg underline"
+        target="_blank"
+        rel="noreferrer"
+        {...props}
+      />
+    );
+  },
+  code({ className, children, ...props }) {
+    const isInline = !className;
+    if (isInline) {
+      return (
+        <code
+          className="rounded bg-vscode-inlineCodeBg px-1 py-0.5 text-xs"
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    }
+
+    return <CodeBlock className={className}>{children}</CodeBlock>;
+  }
+};
+
 export function MessageBubble({ message }: MessageBubbleProps): JSX.Element {
   const isUser = message.role === "user";
 
@@ -59,26 +99,9 @@ export function MessageBubble({ message }: MessageBubbleProps): JSX.Element {
       {isUser ? (
         <p className="whitespace-pre-wrap break-words">{message.text}</p>
       ) : (
-        <div className="prose prose-sm max-w-none prose-headings:text-vscode-editorFg prose-p:text-vscode-editorFg prose-code:text-vscode-editorFg prose-strong:text-vscode-editorFg prose-a:text-vscode-linkFg prose-li:text-vscode-editorFg">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code({ inline, className, children }) {
-                if (inline) {
-                  return (
-                    <code className="rounded bg-vscode-inlineCodeBg px-1 py-0.5 text-xs">
-                      {children}
-                    </code>
-                  );
-                }
-
-                return <CodeBlock className={className}>{children}</CodeBlock>;
-              }
-            }}
-          >
-            {message.text}
-          </ReactMarkdown>
-        </div>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          {message.text}
+        </ReactMarkdown>
       )}
     </article>
   );
