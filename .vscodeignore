@@ -1,0 +1,7 @@
+.vscode/**
+.vscode-test/**
+out/test/**
+webview-ui/node_modules/**
+webview-ui/src/**
+webview-ui/.vite/**
+**/*.map

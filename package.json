@@ -1,0 +1,63 @@
+{
+  "name": "postchat",
+  "displayName": "Postchat",
+  "description": "Sidebar chat for Postman Collection Q&A.",
+  "version": "0.0.1",
+  "publisher": "postchat",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:postchat.start",
+    "onView:postchatView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "postchat.start",
+        "title": "Postchat: Start"
+      }
+    ],
+    "configuration": {
+      "title": "Postchat",
+      "properties": {
+        "postchat.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Anthropic API key used by Postchat. Keep this value secret and never commit it to source control.",
+          "scope": "application"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "postchat-sidebar",
+          "title": "Postchat",
+          "icon": "media/postchat.svg"
+        }
+      ]
+    },
+    "views": {
+      "postchat-sidebar": [
+        {
+          "id": "postchatView",
+          "name": "Postchat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build:webview": "cd webview-ui && npm run build",
+    "compile": "tsc -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.20",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.2"
+  }
+}
