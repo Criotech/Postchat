@@ -73,6 +73,27 @@ ${collectionMarkdown}
       );
     }
 
+    if (isNetworkError(error)) {
+      throw new Error(
+        "Network error while contacting Anthropic. Please check your connection and try again."
+      );
+    }
+
     throw new Error(`Failed to get LLM response: ${message}`);
   }
+}
+
+function isNetworkError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const markers = [
+    "network",
+    "fetch",
+    "econnreset",
+    "enotfound",
+    "etimedout",
+    "timed out",
+    "socket hang up"
+  ];
+
+  return markers.some((marker) => text.includes(marker));
 }

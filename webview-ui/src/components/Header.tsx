@@ -32,11 +32,11 @@ export function Header({
         <button
           type="button"
           onClick={onClearChat}
-          className="rounded p-1.5 text-vscode-inputFg hover:bg-vscode-listHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder"
+          className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2.5 py-1.5 text-xs font-medium text-vscode-inputFg hover:bg-vscode-listHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder"
           aria-label="Clear Chat"
           title="Clear Chat"
         >
-          🗑
+          Clear Chat
         </button>
       </div>
     </header>

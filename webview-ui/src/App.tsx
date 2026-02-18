@@ -6,11 +6,10 @@ import { vscode } from "./vscode";
 import type { Message } from "./types";
 
 type IncomingMessage =
-  | { command: "assistantMessage"; text: string }
-  | { command: "userMessage"; text: string }
-  | { command: "setThinking"; value: boolean }
+  | { command: "addMessage"; role: "user" | "assistant"; text: string }
+  | { command: "showThinking"; value: boolean }
+  | { command: "showError"; text: string }
   | { command: "collectionLoaded"; name: string }
-  | { command: "error"; message: string }
   | { command: "clearChat" };
 
 function createId(): string {
@@ -39,23 +38,22 @@ export default function App(): JSX.Element {
       }
 
       switch (message.command) {
-        case "assistantMessage":
-          appendMessage("assistant", message.text);
-          setIsThinking(false);
+        case "addMessage":
+          appendMessage(message.role, message.text);
+          if (message.role === "assistant") {
+            setIsThinking(false);
+          }
           setError(undefined);
           break;
-        case "userMessage":
-          appendMessage("user", message.text);
-          break;
-        case "setThinking":
+        case "showThinking":
           setIsThinking(message.value);
           break;
         case "collectionLoaded":
           setCollectionName(message.name);
           setError(undefined);
           break;
-        case "error":
-          setError(message.message);
+        case "showError":
+          setError(message.text);
           setIsThinking(false);
           break;
         case "clearChat":
@@ -79,12 +77,10 @@ export default function App(): JSX.Element {
         return;
       }
 
-      appendMessage("user", trimmed);
-      setIsThinking(true);
       setError(undefined);
       vscode.postMessage({ command: "sendMessage", text: trimmed });
     },
-    [appendMessage, isThinking]
+    [isThinking]
   );
 
   const handleLoadCollection = useCallback(() => {

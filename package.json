@@ -46,7 +46,8 @@
       "postchat-sidebar": [
         {
           "id": "postchatView",
-          "name": "Postchat"
+          "name": "Postchat",
+          "type": "webview"
         }
       ]
     }
@@ -59,6 +60,7 @@
     "@anthropic-ai/sdk": "^0.39.0"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.11.20",
     "@types/vscode": "^1.85.0",
     "typescript": "^5.4.2"

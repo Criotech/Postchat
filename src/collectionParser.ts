@@ -36,9 +36,18 @@ type ParsedRequest = {
   body: string;
 };
 
+export type ParsedCollection = {
+  markdown: string;
+  requestCount: number;
+};
+
 const SUPPORTED_SCHEMA_MARKERS = ["v2.0", "v2.1"];
 
 export function parseCollection(filePath: string): string {
+  return parseCollectionWithStats(filePath).markdown;
+}
+
+export function parseCollectionWithStats(filePath: string): ParsedCollection {
   const content = readCollectionFile(filePath);
   const collection = parseCollectionJson(content);
   validateSchema(collection);
@@ -48,11 +57,13 @@ export function parseCollection(filePath: string): string {
     walkItems(item, parsedRequests);
   }
 
-  if (parsedRequests.length === 0) {
-    return "No requests found in this collection.";
-  }
-
-  return parsedRequests.map(formatRequestMarkdown).join("\n\n");
+  return {
+    markdown:
+      parsedRequests.length === 0
+        ? "No requests found in this collection."
+        : parsedRequests.map(formatRequestMarkdown).join("\n\n"),
+    requestCount: parsedRequests.length
+  };
 }
 
 export async function pickCollectionFile(): Promise<string | undefined> {
@@ -90,13 +101,11 @@ function parseCollectionJson(content: string): PostmanCollection {
     }
     return parsed;
   } catch (error) {
-    if (error instanceof Error && error.message.includes("Unexpected token")) {
+    if (error instanceof Error) {
       throw new Error(`Malformed JSON in collection file: ${error.message}`);
     }
-    if (error instanceof Error && error.message.includes("JSON")) {
-      throw new Error(`Malformed JSON in collection file: ${error.message}`);
-    }
-    throw error;
+
+    throw new Error("Malformed JSON in collection file.");
   }
 }
 
@@ -156,10 +165,10 @@ function getRawUrl(url: string | { raw?: string } | undefined): string {
   }
 
   if (typeof url === "string") {
-    return escapeInlineCode(collapseWhitespace(url) || "Unknown");
+    return collapseWhitespace(url) || "Unknown";
   }
 
-  return escapeInlineCode(collapseWhitespace(url.raw ?? "") || "Unknown");
+  return collapseWhitespace(url.raw ?? "") || "Unknown";
 }
 
 function formatHeaders(
@@ -213,7 +222,7 @@ function formatBody(
 function formatRequestMarkdown(request: ParsedRequest): string {
   return [
     `### [${request.method}] ${request.name}`,
-    `- **URL:** \`${request.url}\``,
+    `- **URL:** \`${escapeInlineCode(request.url)}\``,
     `- **Description:** ${request.description}`,
     `- **Headers:** ${request.headers}`,
     `- **Body:** ${request.body}`
