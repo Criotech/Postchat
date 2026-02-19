@@ -2,14 +2,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Header } from "./components/Header";
 import { InputBar } from "./components/InputBar";
 import { MessageList } from "./components/MessageList";
+import { SecretsWarningModal } from "./components/SecretsWarningModal";
 import { vscode } from "./vscode";
 import type { Message } from "./types";
+
+type SecretFinding = {
+  field: string;
+  pattern: string;
+  preview: string;
+};
 
 type IncomingMessage =
   | { command: "addMessage"; role: "user" | "assistant"; text: string }
   | { command: "showThinking"; value: boolean }
   | { command: "showError"; text: string }
   | { command: "collectionLoaded"; name: string }
+  | { command: "environmentLoaded"; name: string }
+  | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "clearChat" };
 
 function createId(): string {
@@ -24,7 +33,11 @@ export default function App(): JSX.Element {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [collectionName, setCollectionName] = useState<string | undefined>();
+  const [environmentName, setEnvironmentName] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([]);
+  const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
+  const [queuedMessage, setQueuedMessage] = useState<string | undefined>();
 
   const appendMessage = useCallback((role: Message["role"], text: string) => {
     setMessages((prev) => [...prev, { id: createId(), role, text }]);
@@ -52,14 +65,27 @@ export default function App(): JSX.Element {
           setCollectionName(message.name);
           setError(undefined);
           break;
+        case "environmentLoaded":
+          setEnvironmentName(message.name);
+          setError(undefined);
+          break;
         case "showError":
           setError(message.text);
           setIsThinking(false);
+          break;
+        case "secretsFound":
+          setSecretFindings(message.findings);
+          setIsSecretsModalOpen(true);
+          setIsThinking(false);
+          setError(undefined);
           break;
         case "clearChat":
           setMessages([]);
           setError(undefined);
           setIsThinking(false);
+          setIsSecretsModalOpen(false);
+          setSecretFindings([]);
+          setQueuedMessage(undefined);
           break;
         default:
           break;
@@ -78,6 +104,7 @@ export default function App(): JSX.Element {
       }
 
       setError(undefined);
+      setQueuedMessage(trimmed);
       vscode.postMessage({ command: "sendMessage", text: trimmed });
     },
     [isThinking]
@@ -95,6 +122,27 @@ export default function App(): JSX.Element {
     vscode.postMessage({ command: "clearChat" });
   }, []);
 
+  const handleLoadEnvironment = useCallback(() => {
+    setError(undefined);
+    vscode.postMessage({ command: "loadEnvironment" });
+  }, []);
+
+  const handleConfirmSend = useCallback(() => {
+    if (!queuedMessage) {
+      return;
+    }
+    setIsSecretsModalOpen(false);
+    setSecretFindings([]);
+    vscode.postMessage({ command: "confirmSend", originalMessage: queuedMessage });
+  }, [queuedMessage]);
+
+  const handleCancelSend = useCallback(() => {
+    setIsSecretsModalOpen(false);
+    setSecretFindings([]);
+    setQueuedMessage(undefined);
+    vscode.postMessage({ command: "cancelSend" });
+  }, []);
+
   const containerClasses = useMemo(
     () =>
       "flex h-screen w-full flex-col bg-vscode-editorBg text-vscode-editorFg",
@@ -105,7 +153,9 @@ export default function App(): JSX.Element {
     <div className={containerClasses}>
       <Header
         collectionName={collectionName}
+        environmentName={environmentName}
         onLoadCollection={handleLoadCollection}
+        onLoadEnvironment={handleLoadEnvironment}
         onClearChat={handleClearChat}
       />
 
@@ -117,6 +167,13 @@ export default function App(): JSX.Element {
 
       <MessageList messages={messages} isThinking={isThinking} />
       <InputBar onSend={handleSend} isThinking={isThinking} />
+      {isSecretsModalOpen ? (
+        <SecretsWarningModal
+          findings={secretFindings}
+          onSendAnyway={handleConfirmSend}
+          onCancel={handleCancelSend}
+        />
+      ) : null}
     </div>
   );
 }

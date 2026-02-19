@@ -43,18 +43,24 @@ export type ParsedCollection = {
 
 const SUPPORTED_SCHEMA_MARKERS = ["v2.0", "v2.1"];
 
-export function parseCollection(filePath: string): string {
-  return parseCollectionWithStats(filePath).markdown;
+export function parseCollection(
+  filePath: string,
+  environment?: Record<string, string>
+): string {
+  return parseCollectionWithStats(filePath, environment).markdown;
 }
 
-export function parseCollectionWithStats(filePath: string): ParsedCollection {
+export function parseCollectionWithStats(
+  filePath: string,
+  environment?: Record<string, string>
+): ParsedCollection {
   const content = readCollectionFile(filePath);
   const collection = parseCollectionJson(content);
   validateSchema(collection);
 
   const parsedRequests: ParsedRequest[] = [];
   for (const item of collection.item ?? []) {
-    walkItems(item, parsedRequests);
+    walkItems(item, parsedRequests, environment);
   }
 
   return {
@@ -126,10 +132,14 @@ function validateSchema(collection: PostmanCollection): void {
   }
 }
 
-function walkItems(item: PostmanItem, output: ParsedRequest[]): void {
+function walkItems(
+  item: PostmanItem,
+  output: ParsedRequest[],
+  environment?: Record<string, string>
+): void {
   if (item.item && item.item.length > 0) {
     for (const nested of item.item) {
-      walkItems(nested, output);
+      walkItems(nested, output, environment);
     }
   }
 
@@ -141,9 +151,9 @@ function walkItems(item: PostmanItem, output: ParsedRequest[]): void {
     name: item.name?.trim() || "Unnamed Request",
     description: getDescription(item.request.description ?? item.description),
     method: (item.request.method || "GET").toUpperCase(),
-    url: getRawUrl(item.request.url),
-    headers: formatHeaders(item.request.header),
-    body: formatBody(item.request.body)
+    url: getRawUrl(item.request.url, environment),
+    headers: formatHeaders(item.request.header, environment),
+    body: formatBody(item.request.body, environment)
   });
 }
 
@@ -159,20 +169,24 @@ function getDescription(value: string | { content?: string } | undefined): strin
   return collapseWhitespace(value.content ?? "") || "None";
 }
 
-function getRawUrl(url: string | { raw?: string } | undefined): string {
+function getRawUrl(
+  url: string | { raw?: string } | undefined,
+  environment?: Record<string, string>
+): string {
   if (!url) {
     return "Unknown";
   }
 
   if (typeof url === "string") {
-    return collapseWhitespace(url) || "Unknown";
+    return resolveEnvironmentVariables(collapseWhitespace(url), environment) || "Unknown";
   }
 
-  return collapseWhitespace(url.raw ?? "") || "Unknown";
+  return resolveEnvironmentVariables(collapseWhitespace(url.raw ?? ""), environment) || "Unknown";
 }
 
 function formatHeaders(
-  headers: Array<{ key?: string; value?: string; disabled?: boolean }> | undefined
+  headers: Array<{ key?: string; value?: string; disabled?: boolean }> | undefined,
+  environment?: Record<string, string>
 ): string {
   const activeHeaders = (headers ?? []).filter((header) => !header.disabled && header.key);
 
@@ -181,7 +195,9 @@ function formatHeaders(
   }
 
   return activeHeaders
-    .map((header) => `${header.key}: ${header.value ?? ""}`.trim())
+    .map((header) =>
+      resolveEnvironmentVariables(`${header.key}: ${header.value ?? ""}`.trim(), environment)
+    )
     .map((header) => `\`${escapeInlineCode(collapseWhitespace(header))}\``)
     .join(", ");
 }
@@ -193,14 +209,15 @@ function formatBody(
         raw?: string;
         urlencoded?: Array<{ key?: string; value?: string; disabled?: boolean }>;
       }
-    | undefined
+    | undefined,
+  environment?: Record<string, string>
 ): string {
   if (!body || !body.mode) {
     return "None";
   }
 
   if (body.mode === "raw") {
-    const raw = collapseWhitespace(body.raw ?? "");
+    const raw = resolveEnvironmentVariables(collapseWhitespace(body.raw ?? ""), environment);
     return raw ? `\`${escapeInlineCode(raw)}\`` : "None";
   }
 
@@ -235,4 +252,18 @@ function collapseWhitespace(value: string): string {
 
 function escapeInlineCode(value: string): string {
   return value.replace(/`/g, "\\`");
+}
+
+function resolveEnvironmentVariables(
+  value: string,
+  environment?: Record<string, string>
+): string {
+  if (!value) {
+    return value;
+  }
+
+  return value.replace(/{{\s*([^{}]+?)\s*}}/g, (match, variableName: string) => {
+    const resolved = environment?.[variableName];
+    return resolved !== undefined ? resolved : `${match} (unresolved)`;
+  });
 }
