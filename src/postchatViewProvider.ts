@@ -138,7 +138,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.postToWebview({ command: "addMessage", role: "user", text: userMessage });
-    this.postToWebview({ command: "showThinking", value: true });
+    this.postToWebview({ command: "userMessage", text: userMessage });
+    this.postThinking(true);
 
     try {
       const assistantResponse = await sendMessage({
@@ -158,16 +159,28 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
         role: "assistant",
         text: assistantResponse
       });
+      this.postToWebview({ command: "assistantMessage", text: assistantResponse });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.postAssistantMessage(`Request failed: ${message} Please retry.`);
+      this.postError(`Request failed: ${message} Please retry.`);
     } finally {
-      this.postToWebview({ command: "showThinking", value: false });
+      this.postThinking(false);
     }
   }
 
   private postAssistantMessage(text: string): void {
     this.postToWebview({ command: "addMessage", role: "assistant", text });
+    this.postToWebview({ command: "assistantMessage", text });
+  }
+
+  private postThinking(value: boolean): void {
+    this.postToWebview({ command: "showThinking", value });
+    this.postToWebview({ command: "setThinking", value });
+  }
+
+  private postError(text: string): void {
+    this.postToWebview({ command: "showError", text });
+    this.postToWebview({ command: "error", message: text });
   }
 
   private postToWebview(message: unknown): void {
