@@ -59,6 +59,18 @@
           "default": "llama3",
           "description": "Which Ollama model to use",
           "scope": "application"
+        },
+        "postchat.anthropicModel": {
+          "type": "string",
+          "default": "claude-sonnet-4-5-20250929",
+          "description": "Which Anthropic model to use",
+          "scope": "application"
+        },
+        "postchat.openaiModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Which OpenAI model to use",
+          "scope": "application"
         }
       }
     },

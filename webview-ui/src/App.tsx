@@ -3,6 +3,8 @@ import { Header } from "./components/Header";
 import { InputBar } from "./components/InputBar";
 import { MessageList } from "./components/MessageList";
 import { SecretsWarningModal } from "./components/SecretsWarningModal";
+import { SettingsPanel } from "./components/SettingsPanel";
+import type { ConfigValues } from "./components/SettingsPanel";
 import { SuggestedPrompts } from "./components/SuggestedPrompts";
 import { resolveSlashCommand } from "./lib/slashCommands";
 import { vscode } from "./vscode";
@@ -23,7 +25,17 @@ type IncomingMessage =
   | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "showSuggestions"; suggestions: string[] }
   | { command: "clearChat" }
-  | { command: "providerChanged"; provider: string; model: string };
+  | { command: "providerChanged"; provider: string; model: string }
+  | {
+      command: "configLoaded";
+      provider: string;
+      anthropicApiKey: string;
+      anthropicModel: string;
+      openaiApiKey: string;
+      openaiModel: string;
+      ollamaEndpoint: string;
+      ollamaModel: string;
+    };
 
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -40,6 +52,16 @@ export default function App(): JSX.Element {
   const [environmentName, setEnvironmentName] = useState<string | undefined>();
   const [activeProvider, setActiveProvider] = useState<string>("anthropic");
   const [activeModel, setActiveModel] = useState<string>("claude-sonnet-4-5");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [configValues, setConfigValues] = useState<ConfigValues>({
+    provider: "anthropic",
+    anthropicApiKey: "",
+    anthropicModel: "claude-sonnet-4-5-20250929",
+    openaiApiKey: "",
+    openaiModel: "gpt-4o",
+    ollamaEndpoint: "http://localhost:11434",
+    ollamaModel: "llama3"
+  });
   const [error, setError] = useState<string | undefined>();
   const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([]);
   const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
@@ -94,6 +116,17 @@ export default function App(): JSX.Element {
         case "providerChanged":
           setActiveProvider(message.provider);
           setActiveModel(message.model);
+          break;
+        case "configLoaded":
+          setConfigValues({
+            provider: message.provider,
+            anthropicApiKey: message.anthropicApiKey,
+            anthropicModel: message.anthropicModel,
+            openaiApiKey: message.openaiApiKey,
+            openaiModel: message.openaiModel,
+            ollamaEndpoint: message.ollamaEndpoint,
+            ollamaModel: message.ollamaModel
+          });
           break;
         case "clearChat":
           setMessages([]);
@@ -191,6 +224,17 @@ export default function App(): JSX.Element {
     vscode.postMessage({ command: "loadEnvironment" });
   }, []);
 
+  const handleSettingsToggle = useCallback(() => {
+    setIsSettingsOpen((prev) => !prev);
+  }, []);
+
+  const handleConfigChange = useCallback((key: string, value: string) => {
+    // Map VS Code setting keys to local ConfigValues keys where they differ
+    const localKey = key === "apiKey" ? "anthropicApiKey" : key;
+    setConfigValues((prev) => ({ ...prev, [localKey]: value }));
+    vscode.postMessage({ command: "updateConfig", key, value });
+  }, []);
+
   const handleSuggestedPrompt = useCallback(
     (suggestion: string) => {
       handleSend(suggestion);
@@ -227,10 +271,16 @@ export default function App(): JSX.Element {
         environmentName={environmentName}
         activeProvider={activeProvider}
         activeModel={activeModel}
+        isSettingsOpen={isSettingsOpen}
         onLoadCollection={handleLoadCollection}
         onLoadEnvironment={handleLoadEnvironment}
         onClearChat={handleClearChat}
+        onSettingsToggle={handleSettingsToggle}
       />
+
+      {isSettingsOpen ? (
+        <SettingsPanel config={configValues} onConfigChange={handleConfigChange} />
+      ) : null}
 
       {error ? (
         <div className="mx-3 mt-2 rounded border border-vscode-errorBorder bg-vscode-errorBg px-3 py-2 text-sm text-vscode-errorFg">

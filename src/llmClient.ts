@@ -28,9 +28,11 @@ export interface LlmProvider {
 // ── Anthropic ─────────────────────────────────────────────────────────────────
 
 class AnthropicProvider implements LlmProvider {
-  readonly modelName = ANTHROPIC_MODEL;
+  readonly modelName: string;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(private readonly apiKey: string, model: string) {
+    this.modelName = model;
+  }
 
   async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
     const client = new Anthropic({ apiKey: this.apiKey });
@@ -42,7 +44,7 @@ class AnthropicProvider implements LlmProvider {
 
     try {
       const response = await client.messages.create({
-        model: ANTHROPIC_MODEL,
+        model: this.modelName,
         max_tokens: MAX_TOKENS,
         system: systemPrompt,
         messages
@@ -89,9 +91,11 @@ class AnthropicProvider implements LlmProvider {
 // ── OpenAI ────────────────────────────────────────────────────────────────────
 
 class OpenAiProvider implements LlmProvider {
-  readonly modelName = OPENAI_MODEL;
+  readonly modelName: string;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(private readonly apiKey: string, model: string) {
+    this.modelName = model;
+  }
 
   async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
     const client = new OpenAI({ apiKey: this.apiKey });
@@ -107,7 +111,7 @@ class OpenAiProvider implements LlmProvider {
 
     try {
       const response = await client.chat.completions.create({
-        model: OPENAI_MODEL,
+        model: this.modelName,
         max_tokens: MAX_TOKENS,
         messages
       });
@@ -206,7 +210,8 @@ export function getProvider(config: vscode.WorkspaceConfiguration): LlmProvider 
 
   if (provider === "openai") {
     const apiKey = config.get<string>("openaiApiKey", "").trim();
-    return new OpenAiProvider(apiKey);
+    const model = config.get<string>("openaiModel", OPENAI_MODEL).trim() || OPENAI_MODEL;
+    return new OpenAiProvider(apiKey, model);
   }
 
   if (provider === "ollama") {
@@ -217,7 +222,8 @@ export function getProvider(config: vscode.WorkspaceConfiguration): LlmProvider 
 
   // Default: anthropic
   const apiKey = config.get<string>("apiKey", "").trim();
-  return new AnthropicProvider(apiKey);
+  const model = config.get<string>("anthropicModel", ANTHROPIC_MODEL).trim() || ANTHROPIC_MODEL;
+  return new AnthropicProvider(apiKey, model);
 }
 
 export function buildSystemPrompt(collectionMarkdown: string): string {

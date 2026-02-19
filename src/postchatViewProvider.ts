@@ -26,7 +26,8 @@ type IncomingWebviewMessage =
   | { command: "exportChat" }
   | { command: "confirmSend"; originalMessage?: string }
   | { command: "cancelSend" }
-  | { command: "clearChat" };
+  | { command: "clearChat" }
+  | { command: "updateConfig"; key: string; value: string };
 
 export class PostchatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "postchatView";
@@ -60,10 +61,11 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       await this.handleWebviewMessage(message);
     });
 
-    // Send provider info whenever the view becomes visible
+    // Send provider info and config whenever the view becomes visible
     webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
         this.postProviderInfo();
+        this.sendConfigToWebview();
       }
     });
 
@@ -71,6 +73,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     const configDisposable = vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration("postchat.provider") ||
+        e.affectsConfiguration("postchat.anthropicModel") ||
+        e.affectsConfiguration("postchat.openaiModel") ||
         e.affectsConfiguration("postchat.ollamaModel")
       ) {
         this.postProviderInfo();
@@ -90,7 +94,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     const provider = config.get<string>("provider", "anthropic");
 
     if (provider === "openai") {
-      return { provider: "openai", model: OPENAI_MODEL };
+      const model = config.get<string>("openaiModel", OPENAI_MODEL).trim() || OPENAI_MODEL;
+      return { provider: "openai", model };
     }
 
     if (provider === "ollama") {
@@ -98,7 +103,40 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       return { provider: "ollama", model };
     }
 
-    return { provider: "anthropic", model: ANTHROPIC_MODEL };
+    const model = config.get<string>("anthropicModel", ANTHROPIC_MODEL).trim() || ANTHROPIC_MODEL;
+    return { provider: "anthropic", model };
+  }
+
+  private sendConfigToWebview(): void {
+    const config = vscode.workspace.getConfiguration("postchat");
+    this.postToWebview({
+      command: "configLoaded",
+      provider: config.get<string>("provider", "anthropic"),
+      anthropicApiKey: config.get<string>("apiKey", ""),
+      anthropicModel: config.get<string>("anthropicModel", ANTHROPIC_MODEL),
+      openaiApiKey: config.get<string>("openaiApiKey", ""),
+      openaiModel: config.get<string>("openaiModel", OPENAI_MODEL),
+      ollamaEndpoint: config.get<string>("ollamaEndpoint", "http://localhost:11434"),
+      ollamaModel: config.get<string>("ollamaModel", "llama3")
+    });
+  }
+
+  private async handleUpdateConfig(key: string, value: string): Promise<void> {
+    const allowed = [
+      "provider",
+      "apiKey",
+      "anthropicModel",
+      "openaiApiKey",
+      "openaiModel",
+      "ollamaEndpoint",
+      "ollamaModel"
+    ];
+    if (!allowed.includes(key)) {
+      return;
+    }
+    await vscode.workspace
+      .getConfiguration("postchat")
+      .update(key, value, vscode.ConfigurationTarget.Global);
   }
 
   private getActiveApiKey(): string | undefined {
@@ -147,6 +185,9 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "clearChat":
         this.conversationHistory = [];
         this.postToWebview({ command: "clearChat" });
+        break;
+      case "updateConfig":
+        await this.handleUpdateConfig(message.key, message.value);
         break;
       default:
         break;
