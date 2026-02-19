@@ -30,6 +30,35 @@
           "default": "",
           "markdownDescription": "Anthropic API key used by Postchat. Keep this value secret and never commit it to source control.",
           "scope": "application"
+        },
+        "postchat.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "ollama"
+          ],
+          "default": "anthropic",
+          "description": "Which LLM provider to use",
+          "scope": "application"
+        },
+        "postchat.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "OpenAI API key used by Postchat. Keep this value secret and never commit it to source control.",
+          "scope": "application"
+        },
+        "postchat.ollamaEndpoint": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama server endpoint for local model inference",
+          "scope": "application"
+        },
+        "postchat.ollamaModel": {
+          "type": "string",
+          "default": "llama3",
+          "description": "Which Ollama model to use",
+          "scope": "application"
         }
       }
     },
@@ -57,7 +86,8 @@
     "compile": "tsc -p ./"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0"
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^6.22.0"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

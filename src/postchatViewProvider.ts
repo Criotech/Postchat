@@ -3,7 +3,13 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { parseCollection, parseCollectionWithStats, pickCollectionFile } from "./collectionParser";
 import { parseEnvironment, pickEnvironmentFile } from "./environmentParser";
-import { MODEL_NAME, sendMessage } from "./llmClient";
+import {
+  ANTHROPIC_MODEL,
+  MODEL_NAME,
+  OPENAI_MODEL,
+  buildSystemPrompt,
+  getProvider
+} from "./llmClient";
 import { generateSuggestions } from "./promptSuggester";
 import { scanForSecrets } from "./secretScanner";
 
@@ -53,6 +59,62 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     webview.onDidReceiveMessage(async (message: IncomingWebviewMessage) => {
       await this.handleWebviewMessage(message);
     });
+
+    // Send provider info whenever the view becomes visible
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.postProviderInfo();
+      }
+    });
+
+    // React to configuration changes
+    const configDisposable = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        e.affectsConfiguration("postchat.provider") ||
+        e.affectsConfiguration("postchat.ollamaModel")
+      ) {
+        this.postProviderInfo();
+      }
+    });
+
+    webviewView.onDidDispose(() => configDisposable.dispose());
+  }
+
+  private postProviderInfo(): void {
+    const { provider, model } = this.getProviderLabel();
+    this.postToWebview({ command: "providerChanged", provider, model });
+  }
+
+  private getProviderLabel(): { provider: string; model: string } {
+    const config = vscode.workspace.getConfiguration("postchat");
+    const provider = config.get<string>("provider", "anthropic");
+
+    if (provider === "openai") {
+      return { provider: "openai", model: OPENAI_MODEL };
+    }
+
+    if (provider === "ollama") {
+      const model = config.get<string>("ollamaModel", "llama3").trim();
+      return { provider: "ollama", model };
+    }
+
+    return { provider: "anthropic", model: ANTHROPIC_MODEL };
+  }
+
+  private getActiveApiKey(): string | undefined {
+    const config = vscode.workspace.getConfiguration("postchat");
+    const provider = config.get<string>("provider", "anthropic");
+
+    if (provider === "anthropic") {
+      return config.get<string>("apiKey", "").trim() || undefined;
+    }
+
+    if (provider === "openai") {
+      return config.get<string>("openaiApiKey", "").trim() || undefined;
+    }
+
+    // ollama: no key needed
+    return undefined;
   }
 
   private async handleWebviewMessage(message: IncomingWebviewMessage): Promise<void> {
@@ -119,13 +181,14 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       this.postToWebview({ command: "collectionLoaded", name: this.collectionName });
       this.postAssistantMessage(`Loaded collection **${this.collectionName}**.`);
 
-      const apiKey = vscode.workspace
+      // Suggestions always use the Anthropic key; falls back to static suggestions if unavailable
+      const anthropicKey = vscode.workspace
         .getConfiguration("postchat")
         .get<string>("apiKey", "")
         .trim();
 
       const suggestions = await generateSuggestions({
-        apiKey,
+        apiKey: anthropicKey,
         provider: MODEL_NAME,
         collectionMarkdown: this.collectionMarkdown
       });
@@ -292,29 +355,47 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const apiKey = vscode.workspace
-      .getConfiguration("postchat")
-      .get<string>("apiKey", "")
-      .trim();
+    const config = vscode.workspace.getConfiguration("postchat");
+    const providerType = config.get<string>("provider", "anthropic");
+    const activeApiKey = this.getActiveApiKey();
 
-    if (!apiKey) {
+    if (providerType !== "ollama" && !activeApiKey) {
+      const settingKey =
+        providerType === "openai" ? "postchat.openaiApiKey" : "postchat.apiKey";
+
       this.postAssistantMessage(
-        "No API key set. Go to Settings and set `postchat.apiKey`, then try again."
+        `No API key set. Go to Settings and set \`${settingKey}\`, then try again.`
       );
 
       const action = "Open Settings";
       const selection = await vscode.window.showWarningMessage(
-        "Postchat requires an Anthropic API key (postchat.apiKey).",
+        `Postchat requires an API key (${settingKey}).`,
         action
       );
 
       if (selection === action) {
-        await vscode.commands.executeCommand(
-          "workbench.action.openSettings",
-          "postchat.apiKey"
-        );
+        await vscode.commands.executeCommand("workbench.action.openSettings", settingKey);
       }
       return;
+    }
+
+    // Ollama: verify endpoint is reachable before attempting chat
+    if (providerType === "ollama") {
+      const endpoint = config.get<string>("ollamaEndpoint", "http://localhost:11434").trim();
+      try {
+        const probe = await fetch(`${endpoint}/api/tags`, { method: "GET" });
+        if (!probe.ok) {
+          this.postAssistantMessage(
+            `Could not connect to Ollama at ${endpoint}. Make sure Ollama is running locally.`
+          );
+          return;
+        }
+      } catch {
+        this.postAssistantMessage(
+          `Could not connect to Ollama at ${endpoint}. Make sure Ollama is running locally.`
+        );
+        return;
+      }
     }
 
     this.postToWebview({ command: "addMessage", role: "user", text: userMessage });
@@ -322,10 +403,12 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     this.postThinking(true);
 
     try {
-      const assistantResponse = await sendMessage({
-        apiKey,
-        collectionMarkdown: this.collectionMarkdown,
-        conversationHistory: this.conversationHistory,
+      const provider = getProvider(config);
+      const systemPrompt = buildSystemPrompt(this.collectionMarkdown);
+
+      const assistantResponse = await provider.sendMessage({
+        systemPrompt,
+        history: this.conversationHistory,
         userMessage
       });
 

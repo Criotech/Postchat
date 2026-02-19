@@ -22,7 +22,8 @@ type IncomingMessage =
   | { command: "environmentLoaded"; name: string }
   | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "showSuggestions"; suggestions: string[] }
-  | { command: "clearChat" };
+  | { command: "clearChat" }
+  | { command: "providerChanged"; provider: string; model: string };
 
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -37,6 +38,8 @@ export default function App(): JSX.Element {
   const [isThinking, setIsThinking] = useState(false);
   const [collectionName, setCollectionName] = useState<string | undefined>();
   const [environmentName, setEnvironmentName] = useState<string | undefined>();
+  const [activeProvider, setActiveProvider] = useState<string>("anthropic");
+  const [activeModel, setActiveModel] = useState<string>("claude-sonnet-4-5");
   const [error, setError] = useState<string | undefined>();
   const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([]);
   const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
@@ -87,6 +90,10 @@ export default function App(): JSX.Element {
           break;
         case "showSuggestions":
           setSuggestions(message.suggestions);
+          break;
+        case "providerChanged":
+          setActiveProvider(message.provider);
+          setActiveModel(message.model);
           break;
         case "clearChat":
           setMessages([]);
@@ -218,6 +225,8 @@ export default function App(): JSX.Element {
       <Header
         collectionName={collectionName}
         environmentName={environmentName}
+        activeProvider={activeProvider}
+        activeModel={activeModel}
         onLoadCollection={handleLoadCollection}
         onLoadEnvironment={handleLoadEnvironment}
         onClearChat={handleClearChat}
