@@ -3,7 +3,8 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { parseCollection, parseCollectionWithStats, pickCollectionFile } from "./collectionParser";
 import { parseEnvironment, pickEnvironmentFile } from "./environmentParser";
-import { sendMessage } from "./llmClient";
+import { MODEL_NAME, sendMessage } from "./llmClient";
+import { generateSuggestions } from "./promptSuggester";
 import { scanForSecrets } from "./secretScanner";
 
 type ConversationTurn = {
@@ -15,6 +16,8 @@ type IncomingWebviewMessage =
   | { command: "loadCollection" }
   | { command: "loadEnvironment" }
   | { command: "sendMessage"; text?: string }
+  | { command: "runRequest"; requestName?: string }
+  | { command: "exportChat" }
   | { command: "confirmSend"; originalMessage?: string }
   | { command: "cancelSend" }
   | { command: "clearChat" };
@@ -70,6 +73,12 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "cancelSend":
         this.handleCancelSend();
         break;
+      case "runRequest":
+        await this.handleRunRequest(message.requestName ?? "");
+        break;
+      case "exportChat":
+        await this.handleExportChat();
+        break;
       case "loadEnvironment":
         await this.handleLoadEnvironment();
         break;
@@ -88,6 +97,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       if (!selectedPath) {
         return;
       }
+      this.postToWebview({ command: "showSuggestions", suggestions: [] });
 
       const parsed = parseCollectionWithStats(selectedPath, this.environmentVariables ?? undefined);
       this.collectionFilePath = selectedPath;
@@ -108,6 +118,18 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
       this.postToWebview({ command: "collectionLoaded", name: this.collectionName });
       this.postAssistantMessage(`Loaded collection **${this.collectionName}**.`);
+
+      const apiKey = vscode.workspace
+        .getConfiguration("postchat")
+        .get<string>("apiKey", "")
+        .trim();
+
+      const suggestions = await generateSuggestions({
+        apiKey,
+        provider: MODEL_NAME,
+        collectionMarkdown: this.collectionMarkdown
+      });
+      this.postToWebview({ command: "showSuggestions", suggestions });
 
       if (parsed.requestCount > 50) {
         this.postAssistantMessage(
@@ -206,6 +228,60 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
   private handleCancelSend(): void {
     this.pendingConfirmedMessage = null;
+  }
+
+  private async handleRunRequest(requestNameRaw: string): Promise<void> {
+    const requestName = requestNameRaw.trim();
+    const prompt = requestName
+      ? `Show me how to run the Postman request named "${requestName}". Include method, URL, required headers, request body, and a runnable curl example.`
+      : "Show me how to run a Postman request from this collection. Include method, URL, required headers, request body, and a runnable curl example.";
+
+    await this.handleSendMessage(prompt);
+  }
+
+  private async handleExportChat(): Promise<void> {
+    try {
+      if (this.conversationHistory.length === 0) {
+        void vscode.window.showInformationMessage("No conversation to export yet.");
+        return;
+      }
+
+      const defaultFileName = `postchat-conversation-${new Date().toISOString().slice(0, 10)}.md`;
+      const workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+      const saveUri = await vscode.window.showSaveDialog({
+        saveLabel: "Export Chat",
+        defaultUri: workspaceUri
+          ? vscode.Uri.joinPath(workspaceUri, defaultFileName)
+          : undefined,
+        filters: {
+          Markdown: ["md"]
+        }
+      });
+
+      if (!saveUri) {
+        return;
+      }
+
+      const markdown = this.buildConversationMarkdown();
+      await vscode.workspace.fs.writeFile(saveUri, Buffer.from(markdown, "utf8"));
+      void vscode.window.showInformationMessage(
+        `Postchat conversation exported to ${path.basename(saveUri.fsPath)}`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.postAssistantMessage(`Failed to export conversation: ${message}`);
+    }
+  }
+
+  private buildConversationMarkdown(): string {
+    const lines: string[] = ["# Postchat Conversation", ""];
+
+    for (const turn of this.conversationHistory) {
+      const heading = turn.role === "user" ? "## User" : "## Assistant";
+      lines.push(heading, "", turn.content, "");
+    }
+
+    return lines.join("\n");
   }
 
   private async sendMessageToLlm(userMessage: string): Promise<void> {
