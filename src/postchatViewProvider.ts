@@ -11,8 +11,9 @@ import {
   buildSystemPrompt,
   getProvider
 } from "./llmClient";
-import { generateSuggestions } from "./promptSuggester";
+import { filterCollectionMarkdown } from "./collectionFilter";
 import { findRequestByKeyword } from "./collectionLookup";
+import { generateSuggestions } from "./promptSuggester";
 import { executeRequest, type ExecutableRequest } from "./requestExecutor";
 import { scanForSecrets } from "./secretScanner";
 
@@ -589,7 +590,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
     try {
       const provider = getProvider(config);
-      const systemPrompt = buildSystemPrompt(this.collectionMarkdown);
+      const filteredMarkdown = filterCollectionMarkdown(this.collectionMarkdown, userMessage);
+      const systemPrompt = buildSystemPrompt(filteredMarkdown);
 
       const assistantResponse = await provider.sendMessage({
         systemPrompt,
