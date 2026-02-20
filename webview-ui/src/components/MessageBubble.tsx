@@ -1,91 +1,89 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { CodeBlock } from "./CodeBlock";
 import type { Message } from "../types";
 
 type MessageBubbleProps = {
   message: Message;
+  onRunRequest?: (method: string, url: string) => void;
 };
 
-function CodeBlock({
-  className,
-  children
-}: {
-  className?: string;
-  children?: React.ReactNode;
-}): JSX.Element {
-  const match = /language-(\w+)/.exec(className ?? "");
-  const language = match?.[1] ?? "text";
-  const rawCode = String(children ?? "").replace(/\n$/, "");
+// Matches METHOD + URL across common markdown formats:
+//   GET https://example.com
+//   `GET` `https://example.com`
+//   **GET** https://example.com
+//   [GET] https://example.com
+//   **URL:** `https://example.com` (extracts URL, method found separately)
+const HTTP_METHOD_URL_PATTERN =
+  /[`*[\]]*\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b[`*[\]]*\s+[`*]*\s*(https?:\/\/[^\s`*,)]+|\/[^\s`*,)]+)/i;
 
-  const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(rawCode);
-  }, [rawCode]);
+// Fallback: find method and URL on separate lines (e.g., **Method:** GET ... **URL:** `https://...`)
+const SEPARATE_METHOD_URL_PATTERN =
+  /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b[\s\S]*?\*\*URL:\*\*\s*`([^`]+)`/i;
 
-  return (
-    <div className="relative my-3 overflow-hidden rounded-md border border-vscode-panelBorder">
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="absolute right-2 top-2 z-10 rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
-      >
-        Copy
-      </button>
-      <SyntaxHighlighter
-        language={language}
-        style={vscDarkPlus}
-        customStyle={{ margin: 0, paddingTop: "2.25rem", fontSize: "0.8rem" }}
-      >
-        {rawCode}
-      </SyntaxHighlighter>
-    </div>
-  );
+function createMarkdownComponents(showSnippetToolbar: boolean): Components {
+  return {
+    p(props) {
+      return <p className="my-2 whitespace-pre-wrap break-words" {...props} />;
+    },
+    ul(props) {
+      return <ul className="my-2 list-disc pl-5" {...props} />;
+    },
+    ol(props) {
+      return <ol className="my-2 list-decimal pl-5" {...props} />;
+    },
+    li(props) {
+      return <li className="my-1" {...props} />;
+    },
+    a(props) {
+      return (
+        <a
+          className="text-vscode-linkFg underline"
+          target="_blank"
+          rel="noreferrer"
+          {...props}
+        />
+      );
+    },
+    code({ className, children, ...props }) {
+      const isInline = Boolean("inline" in props && props.inline);
+      if (isInline) {
+        return (
+          <code className="rounded bg-vscode-inlineCodeBg px-1 py-0.5 text-xs" {...props}>
+            {children}
+          </code>
+        );
+      }
+
+      const match = /language-(\w+)/.exec(className ?? "");
+      const language = match?.[1] ?? "text";
+      const code = String(children ?? "").replace(/\n$/, "");
+
+      return <CodeBlock code={code} language={language} showSnippetToolbar={showSnippetToolbar} />;
+    }
+  };
 }
 
-const markdownComponents: Components = {
-  p(props) {
-    return <p className="my-2 whitespace-pre-wrap break-words" {...props} />;
-  },
-  ul(props) {
-    return <ul className="my-2 list-disc pl-5" {...props} />;
-  },
-  ol(props) {
-    return <ol className="my-2 list-decimal pl-5" {...props} />;
-  },
-  li(props) {
-    return <li className="my-1" {...props} />;
-  },
-  a(props) {
-    return (
-      <a
-        className="text-vscode-linkFg underline"
-        target="_blank"
-        rel="noreferrer"
-        {...props}
-      />
-    );
-  },
-  code({ className, children, ...props }) {
-    const isInline = !className;
-    if (isInline) {
-      return (
-        <code
-          className="rounded bg-vscode-inlineCodeBg px-1 py-0.5 text-xs"
-          {...props}
-        >
-          {children}
-        </code>
-      );
-    }
-
-    return <CodeBlock className={className}>{children}</CodeBlock>;
-  }
-};
-
-export function MessageBubble({ message }: MessageBubbleProps): JSX.Element {
+export function MessageBubble({ message, onRunRequest }: MessageBubbleProps): JSX.Element {
   const isUser = message.role === "user";
+  const markdownComponents = useMemo(() => createMarkdownComponents(!isUser), [isUser]);
+
+  const endpointMatch = useMemo(() => {
+    if (isUser) {
+      return null;
+    }
+    return (
+      HTTP_METHOD_URL_PATTERN.exec(message.text) ??
+      SEPARATE_METHOD_URL_PATTERN.exec(message.text)
+    );
+  }, [isUser, message.text]);
+
+  const handleRunRequest = useCallback(() => {
+    if (endpointMatch && onRunRequest) {
+      onRunRequest(endpointMatch[1].toUpperCase(), endpointMatch[2]);
+    }
+  }, [endpointMatch, onRunRequest]);
 
   return (
     <article
@@ -103,6 +101,15 @@ export function MessageBubble({ message }: MessageBubbleProps): JSX.Element {
           {message.text}
         </ReactMarkdown>
       )}
+      {endpointMatch && onRunRequest ? (
+        <button
+          type="button"
+          onClick={handleRunRequest}
+          className="mt-2 rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+        >
+          ▶ Run this request
+        </button>
+      ) : null}
     </article>
   );
 }

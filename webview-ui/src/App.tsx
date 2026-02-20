@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Header } from "./components/Header";
 import { InputBar } from "./components/InputBar";
 import { MessageList } from "./components/MessageList";
+import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
 import { SecretsWarningModal } from "./components/SecretsWarningModal";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { ConfigValues } from "./components/SettingsPanel";
@@ -26,6 +27,9 @@ type IncomingMessage =
   | { command: "showSuggestions"; suggestions: string[] }
   | { command: "clearChat" }
   | { command: "providerChanged"; provider: string; model: string }
+  | { command: "requestStarted"; requestName: string }
+  | { command: "requestComplete"; result: ExecutionResult; requestName: string }
+  | { command: "requestError"; error: string; requestName: string }
   | {
       command: "configLoaded";
       provider: string;
@@ -68,6 +72,12 @@ export default function App(): JSX.Element {
   const [queuedMessage, setQueuedMessage] = useState<string | undefined>();
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
+
+  // Request execution state
+  const [pendingExecution, setPendingExecution] = useState<ExecutableRequest | null>(null);
+  const [executionResults, setExecutionResults] = useState<
+    Record<string, { request: ExecutableRequest; result: ExecutionResult }>
+  >({});
 
   const appendMessage = useCallback((role: Message["role"], text: string) => {
     setMessages((prev) => [...prev, { id: createId(), role, text }]);
@@ -137,6 +147,29 @@ export default function App(): JSX.Element {
           setQueuedMessage(undefined);
           setSuggestions([]);
           setHasSentFirstMessage(false);
+          setPendingExecution(null);
+          setExecutionResults({});
+          break;
+        case "requestStarted":
+          break;
+        case "requestComplete":
+          setPendingExecution((prev) => {
+            const request = prev ?? {
+              name: message.requestName,
+              method: "GET",
+              url: "",
+              headers: {}
+            };
+            setExecutionResults((prevResults) => ({
+              ...prevResults,
+              [message.requestName]: { request, result: message.result }
+            }));
+            return null;
+          });
+          break;
+        case "requestError":
+          setPendingExecution(null);
+          appendMessage("assistant", `Request **${message.requestName}** failed: ${message.error}`);
           break;
         default:
           break;
@@ -146,6 +179,30 @@ export default function App(): JSX.Element {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [appendMessage]);
+
+  const handleExecuteRequest = useCallback((request: ExecutableRequest) => {
+    setPendingExecution(request);
+    // Remove stale result for re-runs
+    setExecutionResults((prev) => {
+      const next = { ...prev };
+      delete next[request.name];
+      return next;
+    });
+    vscode.postMessage({ command: "executeRequest", request });
+  }, []);
+
+  const handleRunRequestFromBubble = useCallback(
+    (method: string, url: string) => {
+      setPendingExecution({
+        name: `${method} ${url}`,
+        method,
+        url,
+        headers: {}
+      });
+      vscode.postMessage({ command: "executeRequestByEndpoint", method, url });
+    },
+    []
+  );
 
   const handleSend = useCallback(
     (text: string) => {
@@ -216,6 +273,8 @@ export default function App(): JSX.Element {
     setMessages([]);
     setIsThinking(false);
     setError(undefined);
+    setPendingExecution(null);
+    setExecutionResults({});
     vscode.postMessage({ command: "clearChat" });
   }, []);
 
@@ -292,7 +351,13 @@ export default function App(): JSX.Element {
         <SuggestedPrompts suggestions={suggestions} onSelect={handleSuggestedPrompt} />
       ) : null}
 
-      <MessageList messages={messages} isThinking={isThinking} />
+      <MessageList
+        messages={messages}
+        isThinking={isThinking}
+        executionResults={executionResults}
+        pendingExecutionName={pendingExecution?.name ?? null}
+        onRunRequest={handleRunRequestFromBubble}
+      />
       <InputBar onSend={handleSend} isThinking={isThinking} hasCollection={Boolean(collectionName)} />
       {isSecretsModalOpen ? (
         <SecretsWarningModal

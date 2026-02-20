@@ -11,6 +11,8 @@ import {
   getProvider
 } from "./llmClient";
 import { generateSuggestions } from "./promptSuggester";
+import { findRequestByKeyword } from "./collectionLookup";
+import { executeRequest, type ExecutableRequest } from "./requestExecutor";
 import { scanForSecrets } from "./secretScanner";
 
 type ConversationTurn = {
@@ -23,6 +25,8 @@ type IncomingWebviewMessage =
   | { command: "loadEnvironment" }
   | { command: "sendMessage"; text?: string }
   | { command: "runRequest"; requestName?: string }
+  | { command: "executeRequest"; request: ExecutableRequest }
+  | { command: "executeRequestByEndpoint"; method: string; url: string }
   | { command: "exportChat" }
   | { command: "confirmSend"; originalMessage?: string }
   | { command: "cancelSend" }
@@ -34,7 +38,10 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private conversationHistory: ConversationTurn[] = [];
+  /** Redacted markdown (env vars as {{placeholders}}) — sent to the LLM */
   private collectionMarkdown: string | null = null;
+  /** Resolved markdown (env vars substituted) — used for request execution only */
+  private resolvedCollectionMarkdown: string | null = null;
   private collectionName: string | null = null;
   private collectionFilePath: string | null = null;
   private environmentVariables: Record<string, string> | null = null;
@@ -176,6 +183,12 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "runRequest":
         await this.handleRunRequest(message.requestName ?? "");
         break;
+      case "executeRequest":
+        await this.handleExecuteRequest(message.request);
+        break;
+      case "executeRequestByEndpoint":
+        await this.handleExecuteByEndpoint(message.method, message.url);
+        break;
       case "exportChat":
         await this.handleExportChat();
         break;
@@ -202,19 +215,24 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       }
       this.postToWebview({ command: "showSuggestions", suggestions: [] });
 
-      const parsed = parseCollectionWithStats(selectedPath, this.environmentVariables ?? undefined);
+      // Parse without env vars (redacted) for the LLM
+      const redacted = parseCollectionWithStats(selectedPath);
+      // Parse with env vars (resolved) for request execution
+      const resolved = parseCollectionWithStats(selectedPath, this.environmentVariables ?? undefined);
       this.collectionFilePath = selectedPath;
       this.collectionName = path.basename(selectedPath);
 
-      if (parsed.requestCount === 0) {
+      if (redacted.requestCount === 0) {
         this.collectionMarkdown = null;
+        this.resolvedCollectionMarkdown = null;
         this.postAssistantMessage(
           "This collection has no requests. Please load a Postman collection that contains at least one request."
         );
         return;
       }
 
-      this.collectionMarkdown = parsed.markdown;
+      this.collectionMarkdown = redacted.markdown;
+      this.resolvedCollectionMarkdown = resolved.markdown;
       this.conversationHistory = [];
       this.hasSecretSendApproval = false;
       this.pendingConfirmedMessage = null;
@@ -235,9 +253,9 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       });
       this.postToWebview({ command: "showSuggestions", suggestions });
 
-      if (parsed.requestCount > 50) {
+      if (redacted.requestCount > 50) {
         this.postAssistantMessage(
-          `Large collection detected (${parsed.requestCount} requests). Responses may be slower.`
+          `Large collection detected (${redacted.requestCount} requests). Responses may be slower.`
         );
       }
     } catch (error) {
@@ -258,11 +276,13 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       const environmentName = path.basename(selectedPath);
 
       if (this.collectionFilePath) {
-        const parsedCollection = parseCollectionWithStats(
-          this.collectionFilePath,
-          this.environmentVariables
-        );
-        this.collectionMarkdown = parsedCollection.requestCount > 0 ? parsedCollection.markdown : null;
+        // Re-parse redacted (no env vars) for the LLM
+        const redacted = parseCollectionWithStats(this.collectionFilePath);
+        this.collectionMarkdown = redacted.requestCount > 0 ? redacted.markdown : null;
+
+        // Re-parse resolved (with env vars) for request execution
+        const resolved = parseCollectionWithStats(this.collectionFilePath, this.environmentVariables);
+        this.resolvedCollectionMarkdown = resolved.requestCount > 0 ? resolved.markdown : null;
       }
 
       this.postToWebview({ command: "environmentLoaded", name: environmentName });
@@ -294,7 +314,10 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
     if (this.collectionFilePath) {
       try {
-        this.collectionMarkdown = parseCollection(
+        // Redacted for the LLM (no env var values)
+        this.collectionMarkdown = parseCollection(this.collectionFilePath);
+        // Resolved for request execution
+        this.resolvedCollectionMarkdown = parseCollection(
           this.collectionFilePath,
           this.environmentVariables ?? undefined
         );
@@ -306,7 +329,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     }
 
     if (!this.hasSecretSendApproval) {
-      const findings = scanForSecrets(this.collectionMarkdown);
+      // Scan the resolved version since that contains real secrets
+      const findings = scanForSecrets(this.resolvedCollectionMarkdown ?? this.collectionMarkdown!);
       if (findings.length > 0) {
         this.pendingConfirmedMessage = userMessage;
         this.postToWebview({ command: "secretsFound", findings });
@@ -341,6 +365,45 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       : "Show me how to run a Postman request from this collection. Include method, URL, required headers, request body, and a runnable curl example.";
 
     await this.handleSendMessage(prompt);
+  }
+
+  private async handleExecuteByEndpoint(method: string, url: string): Promise<void> {
+    const markdown = this.resolvedCollectionMarkdown ?? this.collectionMarkdown;
+    if (!markdown) {
+      this.postAssistantMessage("No collection loaded. Please load a collection first.");
+      return;
+    }
+
+    // Look up in the resolved markdown so env vars are substituted
+    const candidates = findRequestByKeyword(markdown, url);
+    const match = candidates.find(
+      (r) => r.method.toUpperCase() === method.toUpperCase() && r.url.includes(url)
+    );
+
+    if (match) {
+      // Found full request with headers/body from the collection
+      await this.handleExecuteRequest(match);
+    } else {
+      // Fallback: execute with just method + URL (no headers/body)
+      await this.handleExecuteRequest({
+        name: `${method} ${url}`,
+        method,
+        url,
+        headers: {}
+      });
+    }
+  }
+
+  private async handleExecuteRequest(request: ExecutableRequest): Promise<void> {
+    this.postToWebview({ command: "requestStarted", requestName: request.name });
+
+    try {
+      const result = await executeRequest(request);
+      this.postToWebview({ command: "requestComplete", result, requestName: request.name });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.postToWebview({ command: "requestError", error: message, requestName: request.name });
+    }
   }
 
   private async handleExportChat(): Promise<void> {
