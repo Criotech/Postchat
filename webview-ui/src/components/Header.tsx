@@ -11,6 +11,8 @@ function abbreviateModel(model: string): string {
 
 type HeaderProps = {
   collectionName?: string;
+  collectionPath?: string;
+  collectionSpecType: "postman" | "openapi3" | "swagger2";
   environmentName?: string;
   activeProvider?: string;
   activeModel?: string;
@@ -23,6 +25,8 @@ type HeaderProps = {
 
 export function Header({
   collectionName,
+  collectionPath,
+  collectionSpecType,
   environmentName,
   activeProvider,
   activeModel,
@@ -34,6 +38,7 @@ export function Header({
 }: HeaderProps): JSX.Element {
   const providerLabel = activeProvider ? (PROVIDER_DISPLAY[activeProvider] ?? activeProvider) : null;
   const modelLabel = activeModel ? abbreviateModel(activeModel) : null;
+  const collectionIcon = collectionSpecType === "postman" ? "📦" : "📄";
 
   return (
     <header className="flex flex-col border-b border-vscode-panelBorder">
@@ -42,8 +47,11 @@ export function Header({
           <h1 className="text-base font-semibold">Postchat</h1>
           <div className="flex flex-col gap-1">
             {collectionName ? (
-              <span className="w-fit rounded-full bg-vscode-badgeBg px-2 py-0.5 text-xs text-vscode-badgeFg">
-                📦 {collectionName}
+              <span
+                className="w-fit rounded-full bg-vscode-badgeBg px-2 py-0.5 text-xs text-vscode-badgeFg"
+                title={collectionPath}
+              >
+                {collectionIcon} {collectionName}
               </span>
             ) : null}
             {environmentName ? (

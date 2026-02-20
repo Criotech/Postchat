@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { parseCollection, parseCollectionWithStats, pickCollectionFile } from "./collectionParser";
+import { parseCollectionWithStats, pickCollectionFile } from "./collectionParser";
 import { parseEnvironment, pickEnvironmentFile } from "./environmentParser";
+import { detectSpecType, parseOpenApi, type SpecType } from "./openApiParser";
 import {
   ANTHROPIC_MODEL,
   MODEL_NAME,
@@ -19,6 +20,15 @@ type ConversationTurn = {
   role: "user" | "assistant";
   content: string;
 };
+
+type LoadedSpecType = Exclude<SpecType, "unknown">;
+type ParsedSpec = {
+  markdown: string;
+  requestCount: number;
+  specType: LoadedSpecType;
+};
+const UNRECOGNIZED_SPEC_ERROR =
+  "Unrecognized file format. Please select a Postman Collection or OpenAPI/Swagger specification.";
 
 type IncomingWebviewMessage =
   | { command: "loadCollection" }
@@ -44,6 +54,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private resolvedCollectionMarkdown: string | null = null;
   private collectionName: string | null = null;
   private collectionFilePath: string | null = null;
+  private collectionSpecType: LoadedSpecType | null = null;
   private environmentVariables: Record<string, string> | null = null;
   private hasSecretSendApproval = false;
   private pendingConfirmedMessage: string | null = null;
@@ -207,6 +218,55 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private parseSpecWithStats(
+    filePath: string,
+    specType: SpecType,
+    environment?: Record<string, string>
+  ): ParsedSpec {
+    if (specType === "postman") {
+      const parsed = parseCollectionWithStats(filePath, environment);
+      return { ...parsed, specType: "postman" };
+    }
+
+    if (specType === "openapi3" || specType === "swagger2") {
+      const markdown = parseOpenApi(filePath);
+      return {
+        markdown,
+        requestCount: this.countRequestBlocks(markdown),
+        specType
+      };
+    }
+
+    const extension = path.extname(filePath).toLowerCase();
+    if (extension === ".yaml" || extension === ".yml" || extension === ".json") {
+      const markdown = parseOpenApi(filePath);
+      const inferredSpecType: LoadedSpecType = markdown.includes("- **Spec:** Swagger 2.x")
+        ? "swagger2"
+        : "openapi3";
+      return {
+        markdown,
+        requestCount: this.countRequestBlocks(markdown),
+        specType: inferredSpecType
+      };
+    }
+
+    throw new Error(UNRECOGNIZED_SPEC_ERROR);
+  }
+
+  private countRequestBlocks(markdown: string): number {
+    return (markdown.match(/^### \[/gm) ?? []).length;
+  }
+
+  private getSpecDisplayLabel(specType: LoadedSpecType): string {
+    if (specType === "openapi3") {
+      return "OpenAPI 3.0 specification";
+    }
+    if (specType === "swagger2") {
+      return "Swagger 2.0 specification";
+    }
+    return "collection";
+  }
+
   private async handleLoadCollection(): Promise<void> {
     try {
       const selectedPath = await pickCollectionFile();
@@ -215,21 +275,16 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       }
       this.postToWebview({ command: "showSuggestions", suggestions: [] });
 
-      // Parse without env vars (redacted) for the LLM
-      const redacted = parseCollectionWithStats(selectedPath);
-      // Parse with env vars (resolved) for request execution
-      const resolved = parseCollectionWithStats(selectedPath, this.environmentVariables ?? undefined);
+      const detectedSpecType = detectSpecType(selectedPath);
+      const redacted = this.parseSpecWithStats(selectedPath, detectedSpecType);
+      const resolved = this.parseSpecWithStats(
+        selectedPath,
+        redacted.specType,
+        this.environmentVariables ?? undefined
+      );
       this.collectionFilePath = selectedPath;
       this.collectionName = path.basename(selectedPath);
-
-      if (redacted.requestCount === 0) {
-        this.collectionMarkdown = null;
-        this.resolvedCollectionMarkdown = null;
-        this.postAssistantMessage(
-          "This collection has no requests. Please load a Postman collection that contains at least one request."
-        );
-        return;
-      }
+      this.collectionSpecType = redacted.specType;
 
       this.collectionMarkdown = redacted.markdown;
       this.resolvedCollectionMarkdown = resolved.markdown;
@@ -237,8 +292,21 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       this.hasSecretSendApproval = false;
       this.pendingConfirmedMessage = null;
 
-      this.postToWebview({ command: "collectionLoaded", name: this.collectionName });
-      this.postAssistantMessage(`Loaded collection **${this.collectionName}**.`);
+      this.postToWebview({
+        command: "collectionLoaded",
+        name: this.collectionName,
+        path: selectedPath,
+        specType: this.collectionSpecType
+      });
+      this.postAssistantMessage(
+        `Loaded ${this.getSpecDisplayLabel(this.collectionSpecType)} **${this.collectionName}**.`
+      );
+
+      if (redacted.requestCount === 0) {
+        this.postAssistantMessage(
+          "This specification has no paths/endpoints defined. You can still chat about top-level API metadata."
+        );
+      }
 
       // Suggestions always use the Anthropic key; falls back to static suggestions if unavailable
       const anthropicKey = vscode.workspace
@@ -255,11 +323,18 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
       if (redacted.requestCount > 50) {
         this.postAssistantMessage(
-          `Large collection detected (${redacted.requestCount} requests). Responses may be slower.`
+          `Large specification detected (${redacted.requestCount} endpoints). Responses may be slower.`
         );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (
+        message === "Invalid YAML — could not parse the spec file." ||
+        message === UNRECOGNIZED_SPEC_ERROR
+      ) {
+        this.postAssistantMessage(message);
+        return;
+      }
       this.postAssistantMessage(`Could not load collection: ${message}`);
     }
   }
@@ -275,14 +350,16 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       this.environmentVariables = parsedEnvironment;
       const environmentName = path.basename(selectedPath);
 
-      if (this.collectionFilePath) {
-        // Re-parse redacted (no env vars) for the LLM
-        const redacted = parseCollectionWithStats(this.collectionFilePath);
-        this.collectionMarkdown = redacted.requestCount > 0 ? redacted.markdown : null;
+      if (this.collectionFilePath && this.collectionSpecType) {
+        const redacted = this.parseSpecWithStats(this.collectionFilePath, this.collectionSpecType);
+        this.collectionMarkdown = redacted.markdown;
 
-        // Re-parse resolved (with env vars) for request execution
-        const resolved = parseCollectionWithStats(this.collectionFilePath, this.environmentVariables);
-        this.resolvedCollectionMarkdown = resolved.requestCount > 0 ? resolved.markdown : null;
+        const resolved = this.parseSpecWithStats(
+          this.collectionFilePath,
+          this.collectionSpecType,
+          this.environmentVariables
+        );
+        this.resolvedCollectionMarkdown = resolved.markdown;
       }
 
       this.postToWebview({ command: "environmentLoaded", name: environmentName });
@@ -307,23 +384,25 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
     if (!this.collectionMarkdown) {
       this.postAssistantMessage(
-        "Please load a Postman collection first, then ask your question."
+        "Please load a Postman collection or OpenAPI/Swagger specification first, then ask your question."
       );
       return;
     }
 
-    if (this.collectionFilePath) {
+    if (this.collectionFilePath && this.collectionSpecType) {
       try {
-        // Redacted for the LLM (no env var values)
-        this.collectionMarkdown = parseCollection(this.collectionFilePath);
-        // Resolved for request execution
-        this.resolvedCollectionMarkdown = parseCollection(
+        const redacted = this.parseSpecWithStats(this.collectionFilePath, this.collectionSpecType);
+        this.collectionMarkdown = redacted.markdown;
+
+        const resolved = this.parseSpecWithStats(
           this.collectionFilePath,
+          this.collectionSpecType,
           this.environmentVariables ?? undefined
         );
+        this.resolvedCollectionMarkdown = resolved.markdown;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.postAssistantMessage(`Could not parse collection: ${message}`);
+        this.postAssistantMessage(`Could not parse specification: ${message}`);
         return;
       }
     }
@@ -361,8 +440,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private async handleRunRequest(requestNameRaw: string): Promise<void> {
     const requestName = requestNameRaw.trim();
     const prompt = requestName
-      ? `Show me how to run the Postman request named "${requestName}". Include method, URL, required headers, request body, and a runnable curl example.`
-      : "Show me how to run a Postman request from this collection. Include method, URL, required headers, request body, and a runnable curl example.";
+      ? `Show me how to run the API request named "${requestName}". Include method, URL, required headers, request body, and a runnable curl example.`
+      : "Show me how to run an API request from this loaded specification. Include method, URL, required headers, request body, and a runnable curl example.";
 
     await this.handleSendMessage(prompt);
   }
@@ -370,7 +449,9 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private async handleExecuteByEndpoint(method: string, url: string): Promise<void> {
     const markdown = this.resolvedCollectionMarkdown ?? this.collectionMarkdown;
     if (!markdown) {
-      this.postAssistantMessage("No collection loaded. Please load a collection first.");
+      this.postAssistantMessage(
+        "No specification loaded. Please load a Postman collection or OpenAPI/Swagger file first."
+      );
       return;
     }
 
@@ -454,7 +535,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private async sendMessageToLlm(userMessage: string): Promise<void> {
     if (!this.collectionMarkdown) {
       this.postAssistantMessage(
-        "Please load a Postman collection first, then ask your question."
+        "Please load a Postman collection or OpenAPI/Swagger specification first, then ask your question."
       );
       return;
     }

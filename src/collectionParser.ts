@@ -78,9 +78,9 @@ export async function pickCollectionFile(): Promise<string | undefined> {
     canSelectFiles: true,
     canSelectFolders: false,
     filters: {
-      "JSON Files": ["json"]
+      "API Specification Files": ["json", "yaml", "yml"]
     },
-    openLabel: "Select Postman Collection"
+    openLabel: "Select API Specification"
   });
 
   if (!files || files.length === 0) {

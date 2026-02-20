@@ -17,11 +17,13 @@ type SecretFinding = {
   preview: string;
 };
 
+type CollectionSpecType = "postman" | "openapi3" | "swagger2";
+
 type IncomingMessage =
   | { command: "addMessage"; role: "user" | "assistant"; text: string }
   | { command: "showThinking"; value: boolean }
   | { command: "showError"; text: string }
-  | { command: "collectionLoaded"; name: string }
+  | { command: "collectionLoaded"; name: string; path: string; specType: CollectionSpecType }
   | { command: "environmentLoaded"; name: string }
   | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "showSuggestions"; suggestions: string[] }
@@ -53,6 +55,8 @@ export default function App(): JSX.Element {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [collectionName, setCollectionName] = useState<string | undefined>();
+  const [collectionPath, setCollectionPath] = useState<string | undefined>();
+  const [collectionSpecType, setCollectionSpecType] = useState<CollectionSpecType>("postman");
   const [environmentName, setEnvironmentName] = useState<string | undefined>();
   const [activeProvider, setActiveProvider] = useState<string>("anthropic");
   const [activeModel, setActiveModel] = useState<string>("claude-sonnet-4-5");
@@ -103,6 +107,8 @@ export default function App(): JSX.Element {
           break;
         case "collectionLoaded":
           setCollectionName(message.name);
+          setCollectionPath(message.path);
+          setCollectionSpecType(message.specType);
           setHasSentFirstMessage(false);
           setError(undefined);
           break;
@@ -327,6 +333,8 @@ export default function App(): JSX.Element {
     <div className={containerClasses}>
       <Header
         collectionName={collectionName}
+        collectionPath={collectionPath}
+        collectionSpecType={collectionSpecType}
         environmentName={environmentName}
         activeProvider={activeProvider}
         activeModel={activeModel}
