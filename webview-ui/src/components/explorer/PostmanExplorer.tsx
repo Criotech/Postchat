@@ -1,93 +1,206 @@
-import { vscode } from "../../vscode";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ExecutionResult } from "../RequestResult";
 import type { ParsedCollection, ParsedEndpoint } from "../../types/spec";
+import { vscode } from "../../vscode";
+import { CollectionSummary } from "./CollectionSummary";
+import { EndpointDetail } from "./EndpointDetail";
+import { EndpointSidebar } from "./EndpointSidebar";
 
 type PostmanExplorerProps = {
   collection: ParsedCollection;
+  onRunRequest: (
+    endpoint: ParsedEndpoint
+  ) => Promise<ExecutionResult | null> | ExecutionResult | null | void;
+  onAskAI: (endpoint: ParsedEndpoint) => void;
+  onSendToAI?: (prompt: string) => void;
 };
 
-const METHOD_STYLES: Record<ParsedEndpoint["method"], string> = {
-  GET: "bg-emerald-600/20 text-emerald-300",
-  POST: "bg-blue-600/20 text-blue-300",
-  PUT: "bg-amber-600/20 text-amber-300",
-  PATCH: "bg-violet-600/20 text-violet-300",
-  DELETE: "bg-rose-600/20 text-rose-300",
-  HEAD: "bg-cyan-600/20 text-cyan-300",
-  OPTIONS: "bg-slate-600/20 text-slate-300"
-};
-
-function groupByFolder(endpoints: ParsedEndpoint[]): Array<[string, ParsedEndpoint[]]> {
-  const folderMap = new Map<string, ParsedEndpoint[]>();
-  for (const endpoint of endpoints) {
-    const folderName = endpoint.folder || "General";
-    const existing = folderMap.get(folderName);
-    if (existing) {
-      existing.push(endpoint);
-    } else {
-      folderMap.set(folderName, [endpoint]);
-    }
-  }
-  return Array.from(folderMap.entries());
+function isPromiseLike<T>(value: unknown): value is Promise<T> {
+  return typeof value === "object" && value !== null && "then" in value;
 }
 
-export function PostmanExplorer({ collection }: PostmanExplorerProps): JSX.Element {
-  const folders = groupByFolder(collection.endpoints);
+export function PostmanExplorer({
+  collection,
+  onRunRequest,
+  onAskAI,
+  onSendToAI
+}: PostmanExplorerProps): JSX.Element {
+  const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [liveResultsByEndpointId, setLiveResultsByEndpointId] = useState<Record<string, ExecutionResult>>({});
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const isResizingRef = useRef(false);
+
+  useEffect(() => {
+    if (collection.endpoints.length === 0) {
+      setSelectedEndpointId(null);
+      return;
+    }
+
+    setSelectedEndpointId((prev) => {
+      if (prev && collection.endpoints.some((endpoint) => endpoint.id === prev)) {
+        return prev;
+      }
+      return null;
+    });
+  }, [collection.endpoints]);
+
+  useEffect(() => {
+    setLiveResultsByEndpointId({});
+  }, [collection.title]);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) {
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setContainerWidth(width);
+    });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => {
+      if (!isResizingRef.current || !containerRef.current) {
+        return;
+      }
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const nextWidth = Math.min(Math.max(event.clientX - rect.left, 220), 460);
+      setSidebarWidth(nextWidth);
+    };
+
+    const onMouseUp = () => {
+      isResizingRef.current = false;
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
+  const selectedEndpoint = useMemo(() => {
+    return collection.endpoints.find((endpoint) => endpoint.id === selectedEndpointId) ?? null;
+  }, [collection.endpoints, selectedEndpointId]);
+
+  const isNarrow = containerWidth > 0 && containerWidth < 500;
+
+  const handleSelectEndpoint = useCallback((endpoint: ParsedEndpoint) => {
+    setSelectedEndpointId(endpoint.id);
+  }, []);
+
+  const handleRunEndpoint = useCallback(
+    async (endpoint: ParsedEndpoint): Promise<ExecutionResult | null> => {
+      vscode.postMessage({
+        command: "runEndpoint",
+        endpointId: endpoint.id,
+        endpointName: endpoint.name,
+        method: endpoint.method,
+        url: endpoint.url
+      });
+
+      const maybeResult = onRunRequest(endpoint);
+      let result: ExecutionResult | null | undefined;
+
+      if (isPromiseLike<ExecutionResult | null>(maybeResult)) {
+        result = await maybeResult;
+      } else {
+        result = maybeResult;
+      }
+
+      if (result) {
+        setLiveResultsByEndpointId((prev) => ({
+          ...prev,
+          [endpoint.id]: result
+        }));
+      }
+
+      return result ?? null;
+    },
+    [onRunRequest]
+  );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-vscode-panelBorder px-4 py-3">
-        <h2 className="text-sm font-semibold text-vscode-editorFg">{collection.title}</h2>
-        <p className="mt-1 text-xs text-vscode-descriptionFg">
-          {collection.endpoints.length} endpoints
-        </p>
-      </div>
+    <div ref={containerRef} className="flex h-full min-h-0 flex-col">
+      <CollectionSummary collection={collection} />
 
-      <div className="flex-1 overflow-y-auto px-3 py-3">
-        <div className="flex flex-col gap-3">
-          {folders.map(([folder, endpoints]) => (
-            <section key={folder} className="rounded-md border border-vscode-panelBorder bg-vscode-inputBg/40">
-              <div className="border-b border-vscode-panelBorder px-3 py-2 text-xs font-semibold uppercase tracking-wide text-vscode-descriptionFg">
-                {folder}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {isNarrow ? (
+          <div className="h-full">
+            {selectedEndpoint ? (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="border-b border-vscode-panelBorder px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedEndpointId(null)}
+                    className="rounded px-1.5 py-0.5 text-xs text-vscode-linkFg hover:bg-vscode-listHover"
+                  >
+                    ← Back
+                  </button>
+                </div>
+                <EndpointDetail
+                  endpoint={selectedEndpoint}
+                  onAskAI={onAskAI}
+                  onRunRequest={handleRunEndpoint}
+                  liveResult={liveResultsByEndpointId[selectedEndpoint.id] ?? null}
+                  onSendToAI={onSendToAI}
+                />
               </div>
-              <ul className="divide-y divide-vscode-panelBorder">
-                {endpoints.map((endpoint) => (
-                  <li key={endpoint.id} className="px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={[
-                              "inline-flex min-w-[64px] items-center justify-center rounded px-2 py-0.5 text-[11px] font-bold",
-                              METHOD_STYLES[endpoint.method]
-                            ].join(" ")}
-                          >
-                            {endpoint.method}
-                          </span>
-                          <span className="truncate text-sm text-vscode-editorFg">{endpoint.name}</span>
-                        </div>
-                        <p className="mt-1 truncate text-xs text-vscode-descriptionFg" title={endpoint.url}>
-                          {endpoint.url}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          vscode.postMessage({
-                            command: "executeRequestByEndpoint",
-                            method: endpoint.method,
-                            url: endpoint.url
-                          })
-                        }
-                        className="shrink-0 rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs text-vscode-inputFg hover:bg-vscode-listHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder"
-                      >
-                        Run
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
+            ) : (
+              <EndpointSidebar
+                endpoints={collection.endpoints}
+                selectedId={selectedEndpointId}
+                selectedEndpoint={selectedEndpoint}
+                onSelect={handleSelectEndpoint}
+                onRunRequest={handleRunEndpoint}
+              />
+            )}
+          </div>
+        ) : (
+          <div
+            className="grid h-full min-h-0"
+            style={{ gridTemplateColumns: `${sidebarWidth}px 6px minmax(0, 1fr)` }}
+          >
+            <div className="min-h-0 overflow-hidden border-r border-vscode-panelBorder">
+              <EndpointSidebar
+                endpoints={collection.endpoints}
+                selectedId={selectedEndpointId}
+                selectedEndpoint={selectedEndpoint}
+                onSelect={handleSelectEndpoint}
+                onRunRequest={handleRunEndpoint}
+              />
+            </div>
+
+            <div
+              className="cursor-col-resize bg-vscode-panelBorder/70 hover:bg-vscode-focusBorder"
+              onMouseDown={() => {
+                isResizingRef.current = true;
+              }}
+              aria-label="Resize endpoint sidebar"
+              role="separator"
+            />
+
+            <div className="min-h-0 overflow-hidden">
+              <EndpointDetail
+                endpoint={selectedEndpoint}
+                onAskAI={onAskAI}
+                onRunRequest={handleRunEndpoint}
+                liveResult={selectedEndpoint ? liveResultsByEndpointId[selectedEndpoint.id] ?? null : null}
+                onSendToAI={onSendToAI}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

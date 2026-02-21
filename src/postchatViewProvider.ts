@@ -214,8 +214,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "getCollectionData":
         this.postToWebview({
           command: "collectionData",
-          collection: this.parsedCollection
-            ? (JSON.parse(JSON.stringify(this.parsedCollection)) as ParsedCollection)
+          collection: this.resolvedParsedCollection
+            ? (JSON.parse(JSON.stringify(this.resolvedParsedCollection)) as ParsedCollection)
             : null
         });
         break;
@@ -338,6 +338,10 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
         this.resolvedParsedCollection = resolved;
         this.collectionMarkdown = collectionToMarkdown(parsed);
         this.resolvedCollectionMarkdown = collectionToMarkdown(resolved);
+        this.postToWebview({
+          command: "collectionData",
+          collection: JSON.parse(JSON.stringify(resolved)) as ParsedCollection
+        });
       }
 
       this.postToWebview({ command: "environmentLoaded", name: environmentName });

@@ -5,7 +5,7 @@ import { Header } from "./components/Header";
 import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
 import type { ConfigValues } from "./components/SettingsPanel";
 import { resolveSlashCommand } from "./lib/slashCommands";
-import type { ParsedCollection, SpecType } from "./types/spec";
+import type { ParsedCollection, ParsedEndpoint, SpecType } from "./types/spec";
 import { vscode } from "./vscode";
 import type { Message } from "./types";
 
@@ -95,6 +95,9 @@ export default function App(): JSX.Element {
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
   const tabToastTimeoutRef = useRef<number | null>(null);
+  const explorerRunResolversRef = useRef<
+    Record<string, { resolve: (result: ExecutionResult | null) => void; timeoutId: number }>
+  >({});
 
   // Request execution state
   const [pendingExecution, setPendingExecution] = useState<ExecutableRequest | null>(null);
@@ -214,9 +217,21 @@ export default function App(): JSX.Element {
             }));
             return null;
           });
+          if (explorerRunResolversRef.current[message.requestName]) {
+            const pending = explorerRunResolversRef.current[message.requestName];
+            window.clearTimeout(pending.timeoutId);
+            pending.resolve(message.result);
+            delete explorerRunResolversRef.current[message.requestName];
+          }
           break;
         case "requestError":
           setPendingExecution(null);
+          if (explorerRunResolversRef.current[message.requestName]) {
+            const pending = explorerRunResolversRef.current[message.requestName];
+            window.clearTimeout(pending.timeoutId);
+            pending.resolve(null);
+            delete explorerRunResolversRef.current[message.requestName];
+          }
           appendMessage("assistant", `Request **${message.requestName}** failed: ${message.error}`);
           break;
         default:
@@ -233,7 +248,27 @@ export default function App(): JSX.Element {
       if (tabToastTimeoutRef.current !== null) {
         window.clearTimeout(tabToastTimeoutRef.current);
       }
+
+      for (const requestName of Object.keys(explorerRunResolversRef.current)) {
+        const pending = explorerRunResolversRef.current[requestName];
+        window.clearTimeout(pending.timeoutId);
+        pending.resolve(null);
+        delete explorerRunResolversRef.current[requestName];
+      }
     };
+  }, []);
+
+  useEffect(() => {
+    const handleSwitchTab = (event: Event) => {
+      const customEvent = event as CustomEvent<{ tab?: AppTab }>;
+      const nextTab = customEvent.detail?.tab;
+      if (nextTab === "chat" || nextTab === "explorer") {
+        setActiveTab(nextTab);
+      }
+    };
+
+    window.addEventListener("postchat:switchTab", handleSwitchTab as EventListener);
+    return () => window.removeEventListener("postchat:switchTab", handleSwitchTab as EventListener);
   }, []);
 
   const handleExecuteRequest = useCallback((request: ExecutableRequest) => {
@@ -256,6 +291,44 @@ export default function App(): JSX.Element {
         headers: {}
       });
       vscode.postMessage({ command: "executeRequestByEndpoint", method, url });
+    },
+    []
+  );
+
+  const handleRunRequestFromExplorer = useCallback(
+    (endpoint: ParsedEndpoint): Promise<ExecutionResult | null> => {
+      const request: ExecutableRequest = {
+        name: endpoint.id,
+        method: endpoint.method,
+        url: endpoint.url,
+        headers: endpoint.headers.reduce<Record<string, string>>((acc, header) => {
+          if (header.enabled && header.key.trim().length > 0) {
+            acc[header.key] = header.value;
+          }
+          return acc;
+        }, {}),
+        body: endpoint.requestBody?.trim() ? endpoint.requestBody : undefined
+      };
+
+      setPendingExecution(request);
+      setExecutionResults((prev) => {
+        const next = { ...prev };
+        delete next[request.name];
+        return next;
+      });
+
+      return new Promise<ExecutionResult | null>((resolve) => {
+        const timeoutId = window.setTimeout(() => {
+          if (!explorerRunResolversRef.current[request.name]) {
+            return;
+          }
+          explorerRunResolversRef.current[request.name].resolve(null);
+          delete explorerRunResolversRef.current[request.name];
+        }, 20000);
+
+        explorerRunResolversRef.current[request.name] = { resolve, timeoutId };
+        vscode.postMessage({ command: "executeRequest", request });
+      });
     },
     []
   );
@@ -396,6 +469,23 @@ export default function App(): JSX.Element {
   const showSuggestions =
     !hasSentFirstMessage && messages.filter((msg) => msg.role === "user").length === 0;
 
+  const handleAskAiForEndpoint = useCallback(
+    (endpoint: ParsedEndpoint) => {
+      const prompt = `Help me understand this endpoint and how to call it safely:\n${endpoint.method} ${endpoint.url}\nEndpoint name: ${endpoint.name}\nDescribe required auth, required parameters, and provide one working request example.`;
+      setActiveTab("chat");
+      handleSend(prompt);
+    },
+    [handleSend]
+  );
+
+  const handleSendToAiFromResponse = useCallback(
+    (prompt: string) => {
+      setActiveTab("chat");
+      handleSend(prompt);
+    },
+    [handleSend]
+  );
+
   return (
     <div className="flex flex-col h-screen bg-vscode-editorBg text-vscode-editorFg">
       <Header
@@ -444,6 +534,9 @@ export default function App(): JSX.Element {
             parsedCollection={parsedCollection}
             rawSpec={rawSpec}
             specType={specType}
+            onRunRequest={handleRunRequestFromExplorer}
+            onAskAI={handleAskAiForEndpoint}
+            onSendToAI={handleSendToAiFromResponse}
           />
         ) : null}
       </main>
