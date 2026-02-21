@@ -72,29 +72,138 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function buildEndpointQuestion(endpoint: ParsedEndpoint): string {
+function buildEndpointQuestion(
+  endpoint: ParsedEndpoint,
+  specType: SpecType | null
+): string {
+  const detail = endpoint.description?.trim() || `Path: ${endpoint.path}`;
+
+  if (specType === "openapi3" || specType === "swagger2") {
+    return `Explain the ${endpoint.method} ${endpoint.name} operation. ${detail}. Include required auth, parameters, and runnable curl + JavaScript examples.`;
+  }
+
   if (endpoint.requiresAuth) {
-    return `How do I authenticate and call the ${endpoint.method} ${endpoint.name} endpoint? Show me a complete code example.`;
+    return `How do I authenticate and call ${endpoint.method} ${endpoint.name}? ${detail}. Show complete curl and JavaScript fetch examples.`;
   }
 
-  if (endpoint.requestBody && endpoint.requestBody.trim().length > 0) {
-    return `What is the correct request body format for ${endpoint.method} ${endpoint.name}? Show me an example request in JavaScript fetch and curl.`;
-  }
-
-  return `Explain the ${endpoint.method} ${endpoint.name} endpoint (${endpoint.path}) and how to use it. Provide a code example.`;
+  return `How do I use ${endpoint.method} ${endpoint.name}? ${detail}. Include required parameters and a complete request example.`;
 }
 
-function endpointToExecutable(endpoint: ParsedEndpoint): ExecutableRequest {
+function setHeaderIfMissing(headers: Record<string, string>, key: string, value: string): void {
+  const existingKey = Object.keys(headers).find((headerKey) => headerKey.toLowerCase() === key.toLowerCase());
+  if (!existingKey) {
+    headers[key] = value;
+  }
+}
+
+function replacePathTokens(endpoint: ParsedEndpoint): string {
+  const pathParamExamples = endpoint.parameters
+    .filter((param) => param.location === "path")
+    .reduce<Record<string, string>>((acc, param) => {
+      if (param.name) {
+        acc[param.name] = param.example?.trim() || "sample";
+      }
+      return acc;
+    }, {});
+
+  return endpoint.url.replace(/\{([^{}]+)\}/g, (match, rawName: string, offset: number, whole: string) => {
+    const previousChar = offset > 0 ? whole[offset - 1] : "";
+    const nextChar = whole[offset + match.length] ?? "";
+    if (previousChar === "{" || nextChar === "}") {
+      return match;
+    }
+
+    const paramName = rawName.trim();
+    const replacement = pathParamExamples[paramName];
+    return encodeURIComponent(replacement || "sample");
+  });
+}
+
+function addRequiredQueryParams(endpoint: ParsedEndpoint, urlValue: string): string {
+  const requiredQueryParams = endpoint.parameters.filter(
+    (param) => param.location === "query" && param.required
+  );
+
+  if (requiredQueryParams.length === 0) {
+    return urlValue;
+  }
+
+  try {
+    const parsed = new URL(urlValue);
+    for (const param of requiredQueryParams) {
+      if (!parsed.searchParams.has(param.name)) {
+        parsed.searchParams.set(param.name, param.example?.trim() || "value");
+      }
+    }
+    return parsed.toString();
+  } catch {
+    const [base, existingQuery = ""] = urlValue.split("?");
+    const searchParams = new URLSearchParams(existingQuery);
+    for (const param of requiredQueryParams) {
+      if (!searchParams.has(param.name)) {
+        searchParams.set(param.name, param.example?.trim() || "value");
+      }
+    }
+    const query = searchParams.toString();
+    return query ? `${base}?${query}` : base;
+  }
+}
+
+function addAuthHeaders(
+  endpoint: ParsedEndpoint,
+  headers: Record<string, string>,
+  authSchemes: Array<{ type: string; name: string; details: Record<string, string> }>
+): Record<string, string> {
+  if (!endpoint.requiresAuth) {
+    return headers;
+  }
+
+  const next = { ...headers };
+  const authType = (endpoint.authType ?? "").toLowerCase();
+  const apiKeyScheme =
+    authSchemes.find((scheme) => scheme.type.toLowerCase() === "apikey") ??
+    authSchemes.find((scheme) => scheme.type.toLowerCase() === authType);
+
+  if (authType === "bearer" || authType === "oauth2") {
+    setHeaderIfMissing(next, "Authorization", "Bearer <token>");
+  } else if (authType === "basic") {
+    setHeaderIfMissing(next, "Authorization", "Basic <base64(username:password)>");
+  } else if (authType === "apikey") {
+    if (apiKeyScheme?.details.in?.toLowerCase() === "header") {
+      setHeaderIfMissing(next, apiKeyScheme.details.name || "X-API-Key", "<api-key>");
+    }
+  } else {
+    setHeaderIfMissing(next, "Authorization", "Bearer <token>");
+  }
+
+  return next;
+}
+
+function endpointToExecutable(
+  endpoint: ParsedEndpoint,
+  specType: SpecType | null,
+  authSchemes: Array<{ type: string; name: string; details: Record<string, string> }>
+): ExecutableRequest {
+  const headers = endpoint.headers.reduce<Record<string, string>>((acc, header) => {
+    if (header.enabled && header.key.trim().length > 0) {
+      acc[header.key] = header.value;
+    }
+    return acc;
+  }, {});
+
+  const isOpenApiLike = specType === "openapi3" || specType === "swagger2";
+  const requestUrl = isOpenApiLike
+    ? addRequiredQueryParams(endpoint, replacePathTokens(endpoint))
+    : endpoint.url;
+  const requestHeaders = isOpenApiLike
+    ? addAuthHeaders(endpoint, headers, authSchemes)
+    : headers;
+
   return {
     name: endpoint.id,
     method: endpoint.method,
-    url: endpoint.url,
-    headers: endpoint.headers.reduce<Record<string, string>>((acc, header) => {
-      if (header.enabled && header.key.trim().length > 0) {
-        acc[header.key] = header.value;
-      }
-      return acc;
-    }, {}),
+    url: requestUrl,
+    headers: requestHeaders,
     body: endpoint.requestBody?.trim() ? endpoint.requestBody : undefined
   };
 }
@@ -135,11 +244,13 @@ function AppContent(): JSX.Element {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
+  const [isCollectionParsing, setIsCollectionParsing] = useState(false);
 
   const [programmaticInput, setProgrammaticInput] = useState<string | null>(null);
   const [programmaticSendRequest, setProgrammaticSendRequest] = useState<ProgrammaticSendRequest | null>(null);
 
   const tabToastTimeoutRef = useRef<number | null>(null);
+  const parsingTimeoutRef = useRef<number | null>(null);
   const bridgeTimeoutIdsRef = useRef<number[]>([]);
   const bridgeSendCounterRef = useRef(0);
   const activeTabRef = useRef<AppTab>("chat");
@@ -167,6 +278,13 @@ function AppContent(): JSX.Element {
     bridgeTimeoutIdsRef.current = [];
   }, []);
 
+  const clearParsingTimer = useCallback(() => {
+    if (parsingTimeoutRef.current !== null) {
+      window.clearTimeout(parsingTimeoutRef.current);
+      parsingTimeoutRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
@@ -181,7 +299,7 @@ function AppContent(): JSX.Element {
           setAppTab("explorer");
           return;
         case "askAboutEndpoint": {
-          const question = buildEndpointQuestion(event.endpoint);
+          const question = buildEndpointQuestion(event.endpoint, parsedCollection?.specType ?? specType);
           clearBridgeTimers();
           setAppTab("chat");
           setProgrammaticInput(null);
@@ -199,7 +317,11 @@ function AppContent(): JSX.Element {
           return;
         }
         case "runEndpoint": {
-          const request = endpointToExecutable(event.endpoint);
+          const request = endpointToExecutable(
+            event.endpoint,
+            parsedCollection?.specType ?? specType,
+            parsedCollection?.authSchemes ?? authSchemes
+          );
           bridgeRequestEndpointMapRef.current[request.name] = event.endpoint.id;
           setPendingExecution(request);
           setExecutionResults((prev) => {
@@ -225,7 +347,7 @@ function AppContent(): JSX.Element {
           return;
       }
     },
-    [clearBridgeTimers, emit, setAppTab]
+    [authSchemes, clearBridgeTimers, emit, parsedCollection, setAppTab, specType]
   );
 
   useEffect(() => {
@@ -247,6 +369,12 @@ function AppContent(): JSX.Element {
           setIsThinking(message.value);
           break;
         case "collectionLoaded":
+          clearParsingTimer();
+          setIsCollectionParsing(true);
+          parsingTimeoutRef.current = window.setTimeout(() => {
+            setIsCollectionParsing(false);
+            parsingTimeoutRef.current = null;
+          }, 8000);
           setCollectionName(message.name);
           setCollectionPath(message.path);
           setCollectionSpecType(message.specType);
@@ -268,6 +396,8 @@ function AppContent(): JSX.Element {
           break;
         case "collectionData":
           setParsedCollection(message.collection);
+          setIsCollectionParsing(false);
+          clearParsingTimer();
           if (message.collection) {
             setSpecType(message.collection.specType);
             if (
@@ -286,6 +416,8 @@ function AppContent(): JSX.Element {
         case "showError":
           setError(message.text);
           setIsThinking(false);
+          setIsCollectionParsing(false);
+          clearParsingTimer();
           break;
         case "secretsFound":
           setSecretFindings(message.findings);
@@ -325,6 +457,8 @@ function AppContent(): JSX.Element {
           setProgrammaticInput(null);
           setProgrammaticSendRequest(null);
           bridgeRequestEndpointMapRef.current = {};
+          setIsCollectionParsing(false);
+          clearParsingTimer();
           break;
         case "requestStarted":
           break;
@@ -372,7 +506,7 @@ function AppContent(): JSX.Element {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [appendMessage, emit]);
+  }, [appendMessage, clearParsingTimer, emit]);
 
   useEffect(() => {
     const handleSwitchTab = (event: Event) => {
@@ -392,10 +526,11 @@ function AppContent(): JSX.Element {
       if (tabToastTimeoutRef.current !== null) {
         window.clearTimeout(tabToastTimeoutRef.current);
       }
+      clearParsingTimer();
       clearBridgeTimers();
       bridgeRequestEndpointMapRef.current = {};
     };
-  }, [clearBridgeTimers]);
+  }, [clearBridgeTimers, clearParsingTimer]);
 
   const handleExecuteRequest = useCallback((request: ExecutableRequest) => {
     setPendingExecution(request);
@@ -483,20 +618,28 @@ function AppContent(): JSX.Element {
     setError(undefined);
     setSuggestions([]);
     setHasSentFirstMessage(false);
+    setIsCollectionParsing(true);
+    clearParsingTimer();
+    parsingTimeoutRef.current = window.setTimeout(() => {
+      setIsCollectionParsing(false);
+      parsingTimeoutRef.current = null;
+    }, 8000);
     vscode.postMessage({ command: "loadCollection" });
-  }, []);
+  }, [clearParsingTimer]);
 
   const handleClearChat = useCallback(() => {
     setMessages([]);
     setIsThinking(false);
     setError(undefined);
+    setIsCollectionParsing(false);
+    clearParsingTimer();
     setPendingExecution(null);
     setExecutionResults({});
     setProgrammaticInput(null);
     setProgrammaticSendRequest(null);
     bridgeRequestEndpointMapRef.current = {};
     vscode.postMessage({ command: "clearChat" });
-  }, []);
+  }, [clearParsingTimer]);
 
   const handleLoadEnvironment = useCallback(() => {
     setError(undefined);
@@ -509,7 +652,7 @@ function AppContent(): JSX.Element {
 
   const handleTabChange = useCallback(
     (tab: AppTab) => {
-      if (tab === "explorer" && !collectionName) {
+      if (tab === "explorer" && !collectionName && !isCollectionParsing) {
         setTabToastMessage("Load a Postman collection or OpenAPI spec to use the Explorer");
         if (tabToastTimeoutRef.current !== null) {
           window.clearTimeout(tabToastTimeoutRef.current);
@@ -524,7 +667,7 @@ function AppContent(): JSX.Element {
       setAppTab(tab);
       setTabToastMessage(undefined);
     },
-    [collectionName, setAppTab]
+    [collectionName, isCollectionParsing, setAppTab]
   );
 
   const handleConfigChange = useCallback((key: string, value: string) => {
@@ -577,6 +720,7 @@ function AppContent(): JSX.Element {
         collectionName={collectionName}
         collectionPath={collectionPath}
         collectionSpecType={collectionSpecType}
+        isCollectionParsing={isCollectionParsing}
         environmentName={environmentName}
         activeProvider={activeProvider}
         activeModel={activeModel}
@@ -590,40 +734,45 @@ function AppContent(): JSX.Element {
 
       <main className="flex-1 overflow-hidden">
         {activeTab === "chat" ? (
-          <ChatPanel
-            isSettingsOpen={isSettingsOpen}
-            configValues={configValues}
-            onConfigChange={handleConfigChange}
-            error={error}
-            showSuggestions={showSuggestions}
-            suggestions={suggestions}
-            onSuggestedPrompt={handleSuggestedPrompt}
-            toastMessage={tabToastMessage}
-            messages={messages}
-            isThinking={isThinking}
-            executionResults={executionResults}
-            pendingExecutionName={pendingExecution?.name ?? null}
-            onRunRequest={handleRunRequestFromBubble}
-            onSend={handleSend}
-            hasCollection={Boolean(collectionName)}
-            parsedCollection={parsedCollection}
-            programmaticInput={programmaticInput}
-            programmaticSendRequest={programmaticSendRequest}
-            onProgrammaticSendConsumed={() => setProgrammaticSendRequest(null)}
-            isSecretsModalOpen={isSecretsModalOpen}
-            secretFindings={secretFindings}
-            onConfirmSend={handleConfirmSend}
-            onCancelSend={handleCancelSend}
-          />
+          <div className="h-full transition-opacity duration-150 postchat-fade-in">
+            <ChatPanel
+              isSettingsOpen={isSettingsOpen}
+              configValues={configValues}
+              onConfigChange={handleConfigChange}
+              error={error}
+              showSuggestions={showSuggestions}
+              suggestions={suggestions}
+              onSuggestedPrompt={handleSuggestedPrompt}
+              toastMessage={tabToastMessage}
+              messages={messages}
+              isThinking={isThinking}
+              executionResults={executionResults}
+              pendingExecutionName={pendingExecution?.name ?? null}
+              onRunRequest={handleRunRequestFromBubble}
+              onSend={handleSend}
+              hasCollection={Boolean(collectionName)}
+              parsedCollection={parsedCollection}
+              programmaticInput={programmaticInput}
+              programmaticSendRequest={programmaticSendRequest}
+              onProgrammaticSendConsumed={() => setProgrammaticSendRequest(null)}
+              isSecretsModalOpen={isSecretsModalOpen}
+              secretFindings={secretFindings}
+              onConfirmSend={handleConfirmSend}
+              onCancelSend={handleCancelSend}
+            />
+          </div>
         ) : null}
 
         {activeTab === "explorer" ? (
-          <ExplorerPanel
-            parsedCollection={parsedCollection}
-            rawSpec={rawSpec}
-            specType={specType}
-            onSendToAI={handleSendToAiFromResponse}
-          />
+          <div className="h-full transition-opacity duration-150 postchat-fade-in">
+            <ExplorerPanel
+              parsedCollection={parsedCollection}
+              rawSpec={rawSpec}
+              specType={specType}
+              onSendToAI={handleSendToAiFromResponse}
+              isParsing={isCollectionParsing}
+            />
+          </div>
         ) : null}
       </main>
     </div>

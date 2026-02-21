@@ -30,6 +30,9 @@ export function PostmanExplorer({ collection, onSendToAI }: PostmanExplorerProps
   const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [focusSearchSignal, setFocusSearchSignal] = useState(0);
+  const [clearSearchSignal, setClearSearchSignal] = useState(0);
   const [runResults, setRunResults] = useState<Map<string, ExecutionResult>>(() => new Map());
   const [runErrors, setRunErrors] = useState<Map<string, string>>(() => new Map());
   const [highlightedEndpointId, setHighlightedEndpointId] = useState<string | null>(null);
@@ -131,32 +134,65 @@ export function PostmanExplorer({ collection, onSendToAI }: PostmanExplorerProps
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!selectedEndpointId || isEditableTarget(event.target)) {
-        return;
-      }
-
-      const endpoint = collection.endpoints.find((item) => item.id === selectedEndpointId);
-      if (!endpoint) {
-        return;
-      }
-
+      const selectedEndpoint = selectedEndpointId
+        ? collection.endpoints.find((item) => item.id === selectedEndpointId) ?? null
+        : null;
       const key = event.key.toLowerCase();
+      const hasMetaModifier = event.metaKey || event.ctrlKey;
+      const activeElement = document.activeElement;
+      const detailRoot = document.querySelector<HTMLElement>("[data-postchat-endpoint-detail=\"true\"]");
+      const detailFocused = Boolean(detailRoot && activeElement && detailRoot.contains(activeElement));
+
+      if (hasMetaModifier && key === "f") {
+        event.preventDefault();
+        setFocusSearchSignal((prev) => prev + 1);
+        return;
+      }
+
+      if (key === "escape") {
+        if (sidebarSearchQuery.trim().length > 0) {
+          event.preventDefault();
+          setClearSearchSignal((prev) => prev + 1);
+        } else if (selectedEndpointId) {
+          event.preventDefault();
+          setSelectedEndpointId(null);
+        }
+        return;
+      }
+
+      if (hasMetaModifier && key === "enter" && selectedEndpoint && detailFocused) {
+        event.preventDefault();
+        emit({ type: "runEndpoint", endpoint: selectedEndpoint });
+        return;
+      }
+
+      if (hasMetaModifier && event.shiftKey && key === "a" && selectedEndpoint) {
+        event.preventDefault();
+        emit({ type: "askAboutEndpoint", endpoint: selectedEndpoint });
+        emit({ type: "switchToChat" });
+        return;
+      }
+
+      if (!selectedEndpoint || isEditableTarget(event.target)) {
+        return;
+      }
+
       if (key === "r") {
         event.preventDefault();
-        emit({ type: "runEndpoint", endpoint });
+        emit({ type: "runEndpoint", endpoint: selectedEndpoint });
         return;
       }
 
       if (key === "a") {
         event.preventDefault();
-        emit({ type: "askAboutEndpoint", endpoint });
+        emit({ type: "askAboutEndpoint", endpoint: selectedEndpoint });
         emit({ type: "switchToChat" });
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [collection.endpoints, emit, selectedEndpointId]);
+  }, [collection.endpoints, emit, selectedEndpointId, sidebarSearchQuery]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -201,7 +237,7 @@ export function PostmanExplorer({ collection, onSendToAI }: PostmanExplorerProps
     return collection.endpoints.find((endpoint) => endpoint.id === selectedEndpointId) ?? null;
   }, [collection.endpoints, selectedEndpointId]);
 
-  const isNarrow = containerWidth > 0 && containerWidth < 500;
+  const isNarrow = containerWidth > 0 && containerWidth < 400;
 
   const handleSelectEndpoint = useCallback((endpoint: ParsedEndpoint) => {
     setSelectedEndpointId(endpoint.id);
@@ -216,7 +252,7 @@ export function PostmanExplorer({ collection, onSendToAI }: PostmanExplorerProps
 
   return (
     <div ref={containerRef} className="flex h-full min-h-0 flex-col">
-      <CollectionSummary collection={collection} />
+      <CollectionSummary collection={collection} compact={isNarrow} />
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {isNarrow ? (
@@ -249,6 +285,10 @@ export function PostmanExplorer({ collection, onSendToAI }: PostmanExplorerProps
                 runResults={runResults}
                 runErrors={runErrors}
                 highlightedEndpointId={highlightedEndpointId}
+                focusSearchSignal={focusSearchSignal}
+                clearSearchSignal={clearSearchSignal}
+                onSearchQueryChange={setSidebarSearchQuery}
+                onEscapeNoSearch={() => setSelectedEndpointId(null)}
               />
             )}
           </div>
@@ -267,6 +307,10 @@ export function PostmanExplorer({ collection, onSendToAI }: PostmanExplorerProps
                 runResults={runResults}
                 runErrors={runErrors}
                 highlightedEndpointId={highlightedEndpointId}
+                focusSearchSignal={focusSearchSignal}
+                clearSearchSignal={clearSearchSignal}
+                onSearchQueryChange={setSidebarSearchQuery}
+                onEscapeNoSearch={() => setSelectedEndpointId(null)}
               />
             </div>
 

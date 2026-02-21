@@ -6,6 +6,7 @@ import { vscode } from "../../vscode";
 
 type ResponseViewerProps = {
   result: ExecutionResult | null;
+  error?: string | null;
   requestName: string;
   onSendToAI?: (prompt: string) => void;
 };
@@ -44,6 +45,7 @@ function buildSendToAiPrompt(
 
 export function ResponseViewer({
   result,
+  error,
   requestName,
   onSendToAI
 }: ResponseViewerProps): JSX.Element | null {
@@ -129,8 +131,16 @@ export function ResponseViewer({
     vscode.postMessage({ command: "sendMessage", text: prompt });
   }, [onSendToAI, requestName, result]);
 
-  if (!result) {
+  if (!result && !error) {
     return null;
+  }
+
+  if (!result && error) {
+    return (
+      <section className="rounded border border-vscode-errorBorder bg-vscode-errorBg px-3 py-2 text-sm text-vscode-errorFg">
+        Request failed: {error}
+      </section>
+    );
   }
 
   const tabButton = (tab: ResponseTab, label: string): JSX.Element => (

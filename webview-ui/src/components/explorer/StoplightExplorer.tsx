@@ -6,6 +6,7 @@ import type { ExecutionResult } from "../RequestResult";
 import { useBridgeListener } from "../../hooks/useBridgeListener";
 import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedCollection, ParsedEndpoint, SpecType } from "../../types/spec";
+import { CollectionSummary } from "./CollectionSummary";
 import { FloatingActionBar } from "./FloatingActionBar";
 
 type StoplightExplorerProps = {
@@ -56,9 +57,14 @@ export function StoplightExplorer({
   const { emit } = useBridge();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
+  const pulseTimerRef = useRef<number | null>(null);
   const [selectedOperation, setSelectedOperation] = useState<ParsedEndpoint | null>(null);
   const [runState, setRunState] = useState<RunState | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [activeMethods, setActiveMethods] = useState<Set<"ALL" | ParsedEndpoint["method"]>>(
+    () => new Set(["ALL"])
+  );
+  const [floatingPulse, setFloatingPulse] = useState(false);
 
   const parsedSpec = useMemo<Record<string, unknown> | null>(() => {
     const trimmed = rawSpec.trim();
@@ -125,7 +131,6 @@ export function StoplightExplorer({
     const endpoints = parsedCollection.endpoints;
 
     if (!hash.startsWith("#/")) {
-      setSelectedOperationId(null);
       setSelectedOperation(null);
       return;
     }
@@ -147,8 +152,6 @@ export function StoplightExplorer({
           : null;
 
       const matched = operationByNameOrId ?? operationByPathAndMethod;
-      const nextSelectedId = matched?.id ?? operationToken ?? null;
-      setSelectedOperationId(nextSelectedId);
       setSelectedOperation(matched);
       return;
     }
@@ -161,14 +164,35 @@ export function StoplightExplorer({
       const method = (pathMatch[2] ?? "").toUpperCase() as ParsedEndpoint["method"];
       const matched =
         endpoints.find((endpoint) => endpoint.path === decodedPath && endpoint.method === method) ?? null;
-      setSelectedOperationId(matched?.id ?? `${method} ${decodedPath}`);
       setSelectedOperation(matched);
       return;
     }
 
-    setSelectedOperationId(null);
     setSelectedOperation(null);
   }, [operationLookup, parsedCollection.endpoints]);
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current !== null) {
+        window.clearTimeout(pulseTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) {
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setContainerWidth(width);
+    });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     window.addEventListener("hashchange", handleHashChange);
@@ -186,13 +210,40 @@ export function StoplightExplorer({
       }
 
       const key = event.key.toLowerCase();
+      const hasMetaModifier = event.metaKey || event.ctrlKey;
+      const methodAllowed =
+        activeMethods.has("ALL") || activeMethods.has(selectedOperation.method);
+      const activeElement = document.activeElement;
+      const stoplightFocused = Boolean(
+        containerRef.current && activeElement && containerRef.current.contains(activeElement)
+      );
+
+      if (hasMetaModifier && key === "enter" && stoplightFocused && methodAllowed) {
+        event.preventDefault();
+        emit({ type: "runEndpoint", endpoint: selectedOperation });
+        return;
+      }
+
+      if (hasMetaModifier && event.shiftKey && key === "a" && methodAllowed) {
+        event.preventDefault();
+        emit({ type: "askAboutEndpoint", endpoint: selectedOperation });
+        emit({ type: "switchToChat" });
+        return;
+      }
+
       if (key === "r") {
+        if (!methodAllowed) {
+          return;
+        }
         event.preventDefault();
         emit({ type: "runEndpoint", endpoint: selectedOperation });
         return;
       }
 
       if (key === "a") {
+        if (!methodAllowed) {
+          return;
+        }
         event.preventDefault();
         emit({ type: "askAboutEndpoint", endpoint: selectedOperation });
         emit({ type: "switchToChat" });
@@ -201,7 +252,7 @@ export function StoplightExplorer({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [emit, selectedOperation]);
+  }, [activeMethods, emit, selectedOperation]);
 
   useBridgeListener(
     (event) => {
@@ -220,6 +271,14 @@ export function StoplightExplorer({
 
           const encodedPath = encodeStoplightPath(target.path);
           window.location.hash = `#/paths/${encodedPath}/${target.method.toLowerCase()}`;
+          setFloatingPulse(true);
+          if (pulseTimerRef.current !== null) {
+            window.clearTimeout(pulseTimerRef.current);
+          }
+          pulseTimerRef.current = window.setTimeout(() => {
+            setFloatingPulse(false);
+            pulseTimerRef.current = null;
+          }, 1000);
           return;
         }
         default:
@@ -233,18 +292,40 @@ export function StoplightExplorer({
     selectedOperation && runState?.endpointId === selectedOperation.id ? runState.result : null;
   const currentRunError =
     selectedOperation && runState?.endpointId === selectedOperation.id ? runState.error : null;
+  const isCompact = containerWidth > 0 && containerWidth < 400;
+  const actionsEnabled = selectedOperation
+    ? activeMethods.has("ALL") || activeMethods.has(selectedOperation.method)
+    : false;
+
+  const handleMethodToggle = useCallback((method: "ALL" | ParsedEndpoint["method"]) => {
+    setActiveMethods((prev) => {
+      if (method === "ALL") {
+        return new Set(["ALL"]);
+      }
+
+      const next = new Set(prev);
+      next.delete("ALL");
+      if (next.has(method)) {
+        next.delete(method);
+      } else {
+        next.add(method);
+      }
+
+      if (next.size === 0) {
+        next.add("ALL");
+      }
+      return next;
+    });
+  }, []);
 
   if (!parsedSpec) {
-    return (
-      <div className="m-3 rounded border border-vscode-errorBorder bg-vscode-errorBg px-3 py-2 text-sm text-vscode-errorFg">
-        Could not parse the specification file. Check that it is valid JSON or YAML.
-      </div>
-    );
+    throw new Error("Could not parse the specification file.");
   }
 
   return (
-    <div className="relative flex h-full flex-col">
-      <div ref={containerRef} className="postchat-stoplight-wrapper flex-1 overflow-auto pb-24">
+    <div ref={containerRef} className="relative flex h-full flex-col">
+      <CollectionSummary collection={parsedCollection} compact={isCompact} />
+      <div className="postchat-stoplight-wrapper flex-1 overflow-auto pb-24">
         <API
           key={specType}
           apiDescriptionDocument={parsedSpec}
@@ -261,6 +342,13 @@ export function StoplightExplorer({
           runResult={currentRunResult}
           runError={currentRunError}
           onClearResult={() => setRunState(null)}
+          compact={isCompact}
+          pulse={floatingPulse}
+          methodFilters={{
+            activeMethods: Array.from(activeMethods),
+            onToggle: handleMethodToggle
+          }}
+          actionsEnabled={actionsEnabled}
         />
       ) : null}
     </div>

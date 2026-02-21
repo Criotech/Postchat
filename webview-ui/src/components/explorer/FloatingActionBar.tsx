@@ -9,6 +9,13 @@ type FloatingActionBarProps = {
   runResult: ExecutionResult | null;
   runError: string | null;
   onClearResult: () => void;
+  compact?: boolean;
+  pulse?: boolean;
+  methodFilters?: {
+    activeMethods: Array<"ALL" | ParsedEndpoint["method"]>;
+    onToggle: (method: "ALL" | ParsedEndpoint["method"]) => void;
+  };
+  actionsEnabled?: boolean;
 };
 
 const METHOD_BADGE_STYLES: Record<ParsedEndpoint["method"], string> = {
@@ -38,7 +45,11 @@ export function FloatingActionBar({
   endpoint,
   runResult,
   runError,
-  onClearResult
+  onClearResult,
+  compact = false,
+  pulse = false,
+  methodFilters,
+  actionsEnabled = true
 }: FloatingActionBarProps): JSX.Element {
   const { emit } = useBridge();
   const [showFullResponse, setShowFullResponse] = useState(false);
@@ -59,36 +70,90 @@ export function FloatingActionBar({
     >
       {runResult && showFullResponse ? (
         <div className="max-h-[45vh] overflow-auto border-b border-vscode-panelBorder px-3 py-2">
-          <ResponseViewer result={runResult} requestName={endpoint.name} />
+          <ResponseViewer result={runResult} error={runError} requestName={endpoint.name} />
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+      {runError && !runResult ? (
+        <div className="border-b border-vscode-panelBorder px-3 py-2">
+          <ResponseViewer result={null} error={runError} requestName={endpoint.name} />
+        </div>
+      ) : null}
+
+      {methodFilters ? (
+        <div className="border-b border-vscode-panelBorder px-3 py-1.5">
+          <div className="flex flex-wrap items-center gap-1">
+            {(["ALL", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const).map(
+              (method) => {
+                const active = methodFilters.activeMethods.includes(method);
+                return (
+                  <button
+                    key={method}
+                    type="button"
+                    onClick={() => methodFilters.onToggle(method)}
+                    className={[
+                      "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                      active
+                        ? "border-vscode-buttonBg bg-vscode-buttonBg text-vscode-buttonFg"
+                        : "border-vscode-inputBorder text-vscode-descriptionFg hover:bg-vscode-listHover"
+                    ].join(" ")}
+                  >
+                    {method}
+                  </button>
+                );
+              }
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      <div
+        className={[
+          "flex flex-wrap items-center gap-2 px-3 py-2",
+          pulse ? "postchat-fab-pulse" : ""
+        ].join(" ")}
+      >
         <span className={["rounded px-2 py-0.5 text-xs font-semibold", METHOD_BADGE_STYLES[endpoint.method]].join(" ")}>
           {endpoint.method}
         </span>
         <span className="max-w-[260px] truncate text-sm font-medium text-vscode-editorFg">{endpoint.name}</span>
-        <span className="text-xs text-vscode-descriptionFg">{`Selected: ${endpoint.method} ${endpoint.path}`}</span>
+        {!compact ? (
+          <span className="text-xs text-vscode-descriptionFg">{`Selected: ${endpoint.method} ${endpoint.path}`}</span>
+        ) : null}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {!runResult ? (
             <>
               <button
                 type="button"
+                disabled={!actionsEnabled}
                 onClick={() => emit({ type: "runEndpoint", endpoint })}
-                className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
+                className={[
+                  "rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover",
+                  !actionsEnabled ? "cursor-not-allowed opacity-50" : ""
+                ].join(" ")}
+                title={
+                  actionsEnabled ? "Run endpoint" : `Method filter excludes ${endpoint.method} operations`
+                }
               >
-                ▶ Run
+                {compact ? "▶" : "▶ Run"}
               </button>
               <button
                 type="button"
+                disabled={!actionsEnabled}
                 onClick={() => {
                   emit({ type: "askAboutEndpoint", endpoint });
                   emit({ type: "switchToChat" });
                 }}
-                className="rounded bg-vscode-buttonSecondaryBg px-2.5 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+                className={[
+                  "rounded bg-vscode-buttonSecondaryBg px-2.5 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover",
+                  !actionsEnabled ? "cursor-not-allowed opacity-50" : ""
+                ].join(" ")}
+                title={
+                  actionsEnabled ? "Ask AI about endpoint" : `Method filter excludes ${endpoint.method} operations`
+                }
               >
-                💬 Ask AI
+                {compact ? "💬" : "💬 Ask AI"}
               </button>
             </>
           ) : (
@@ -112,7 +177,7 @@ export function FloatingActionBar({
                 }}
                 className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
               >
-                Ask AI
+                {compact ? "💬" : "Ask AI"}
               </button>
               <button
                 type="button"
@@ -127,13 +192,7 @@ export function FloatingActionBar({
         </div>
       </div>
 
-      <div className="px-3 pb-2 text-[10px] text-vscode-descriptionFg">R to run · A to ask AI</div>
-
-      {runError ? (
-        <div className="border-t border-vscode-panelBorder px-3 py-2 text-xs text-vscode-errorFg">
-          Request failed: {runError}
-        </div>
-      ) : null}
+      {!compact ? <div className="px-3 pb-2 text-[10px] text-vscode-descriptionFg">R to run · A to ask AI</div> : null}
     </div>
   );
 }

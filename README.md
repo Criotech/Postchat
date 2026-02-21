@@ -12,6 +12,39 @@ For example if there is an image subfolder under your extension project workspac
 
 > Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
 
+## Explorer
+
+The Explorer tab gives you an API-first view of your loaded collection/spec and keeps Chat actions connected to endpoint context.
+
+### How to use the Explorer tab
+
+1. Click **Load Collection** and choose a supported file.
+2. Open the **Explorer** tab.
+3. Select an endpoint/operation.
+4. Use **Run** to execute requests and **Ask AI** to send contextual questions to chat.
+5. Use **View in Explorer** chips from assistant messages to jump back to endpoints.
+
+### Supported file types
+
+- Postman Collection JSON
+- OpenAPI 3.0 YAML/JSON
+- Swagger 2.0 YAML/JSON
+
+### Chat bridge behavior
+
+- **Ask AI** from Explorer generates endpoint-aware prompts in chat.
+- **Run** executes the selected endpoint and returns a structured response viewer.
+- **View in Explorer** links in chat jump to:
+  - Postman endpoints in the custom sidebar
+  - OpenAPI/Swagger operations in Stoplight (hash navigation)
+
+### Explorer keyboard shortcuts
+
+- `Cmd/Ctrl+F`: Focus endpoint search (Postman explorer)
+- `Escape`: Clear search or deselect endpoint
+- `Cmd/Ctrl+Enter`: Run selected endpoint (when detail panel is focused)
+- `Cmd/Ctrl+Shift+A`: Ask AI about selected endpoint
+
 ## Requirements
 
 If you have any requirements or dependencies, add a section describing those and how to install and configure them.

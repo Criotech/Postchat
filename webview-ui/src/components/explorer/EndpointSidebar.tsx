@@ -13,6 +13,10 @@ type EndpointSidebarProps = {
   runResults: Map<string, ExecutionResult>;
   runErrors: Map<string, string>;
   highlightedEndpointId: string | null;
+  focusSearchSignal?: number;
+  clearSearchSignal?: number;
+  onSearchQueryChange?: (query: string) => void;
+  onEscapeNoSearch?: () => void;
 };
 
 type MethodFilter = "ALL" | "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -52,12 +56,17 @@ export function EndpointSidebar({
   onRunRequest,
   runResults,
   runErrors,
-  highlightedEndpointId
+  highlightedEndpointId,
+  focusSearchSignal = 0,
+  clearSearchSignal = 0,
+  onSearchQueryChange,
+  onEscapeNoSearch
 }: EndpointSidebarProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMethods, setActiveMethods] = useState<Set<MethodFilter>>(() => new Set(["ALL"]));
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const rowRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
@@ -75,7 +84,7 @@ export function EndpointSidebar({
         return true;
       }
 
-      const haystack = `${endpoint.name} ${endpoint.path} ${endpoint.method}`.toLowerCase();
+      const haystack = `${endpoint.name} ${endpoint.path} ${endpoint.method} ${endpoint.description ?? ""}`.toLowerCase();
       return haystack.includes(normalizedSearch);
     });
   }, [activeMethods, endpoints, normalizedSearch]);
@@ -104,6 +113,23 @@ export function EndpointSidebar({
 
     node.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highlightedEndpointId]);
+
+  useEffect(() => {
+    onSearchQueryChange?.(searchQuery);
+  }, [onSearchQueryChange, searchQuery]);
+
+  useEffect(() => {
+    if (focusSearchSignal > 0) {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    }
+  }, [focusSearchSignal]);
+
+  useEffect(() => {
+    if (clearSearchSignal > 0) {
+      setSearchQuery("");
+    }
+  }, [clearSearchSignal]);
 
   const filtersActive = normalizedSearch.length > 0 || !activeMethods.has("ALL");
 
@@ -145,12 +171,19 @@ export function EndpointSidebar({
     [onRunRequest]
   );
 
+  const clearAllFilters = useCallback(() => {
+    setSearchQuery("");
+    setActiveMethods(new Set(["ALL"]));
+  }, []);
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "Escape") {
         if (searchQuery.length > 0) {
           event.preventDefault();
           setSearchQuery("");
+        } else {
+          onEscapeNoSearch?.();
         }
         return;
       }
@@ -188,7 +221,7 @@ export function EndpointSidebar({
         }
       }
     },
-    [filteredEndpoints, onSelect, searchQuery, selectedId]
+    [filteredEndpoints, onEscapeNoSearch, onSelect, searchQuery, selectedId]
   );
 
   return (
@@ -196,6 +229,8 @@ export function EndpointSidebar({
       <div className="border-b border-vscode-panelBorder px-3 py-3">
         <div className="relative">
           <input
+            id="postchat-endpoint-search"
+            ref={searchInputRef}
             type="text"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -252,7 +287,20 @@ export function EndpointSidebar({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
         {groupedEndpoints.length === 0 ? (
-          <p className="px-2 py-3 text-sm text-vscode-descriptionFg">No endpoints match current filters.</p>
+          <div className="px-2 py-3">
+            <p className="text-sm text-vscode-descriptionFg">
+              {normalizedSearch
+                ? `No endpoints match '${searchQuery}'`
+                : "No endpoints match current filters."}
+            </p>
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="mt-2 rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+            >
+              Clear filters
+            </button>
+          </div>
         ) : null}
 
         {groupedEndpoints.map(([folderName, folderEndpoints]) => {

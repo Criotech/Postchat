@@ -13,6 +13,7 @@ type HeaderProps = {
   collectionName?: string;
   collectionPath?: string;
   collectionSpecType: "postman" | "openapi3" | "swagger2";
+  isCollectionParsing?: boolean;
   environmentName?: string;
   activeTab: "chat" | "explorer";
   activeProvider?: string;
@@ -29,6 +30,7 @@ export function Header({
   collectionName,
   collectionPath,
   collectionSpecType,
+  isCollectionParsing = false,
   environmentName,
   activeTab,
   activeProvider,
@@ -43,7 +45,7 @@ export function Header({
   const providerLabel = activeProvider ? (PROVIDER_DISPLAY[activeProvider] ?? activeProvider) : null;
   const modelLabel = activeModel ? abbreviateModel(activeModel) : null;
   const collectionIcon = collectionSpecType === "postman" ? "📦" : "📄";
-  const isExplorerAvailable = Boolean(collectionName);
+  const isExplorerAvailable = Boolean(collectionName) || isCollectionParsing;
 
   const tabButtonClasses = (tab: "chat" | "explorer", isDisabled = false): string =>
     [

@@ -18,7 +18,33 @@ type EditableHeader = {
   enabled: boolean;
 };
 
-type DetailSection = "params" | "headers" | "body" | "responses";
+type QueryParamRow = {
+  id: string;
+  name: string;
+  required: boolean;
+  type: string;
+  description?: string;
+  included: boolean;
+  value: string;
+};
+
+type JsonValidationState =
+  | { status: "idle" }
+  | { status: "valid" }
+  | { status: "invalid"; message: string };
+
+type DetailSection = "params" | "pathParams" | "queryParams" | "headers" | "body" | "responses";
+
+const COMMON_HEADER_NAMES = [
+  "Content-Type",
+  "Accept",
+  "Authorization",
+  "X-API-Key",
+  "User-Agent",
+  "If-None-Match",
+  "Cache-Control",
+  "X-Request-Id"
+];
 
 const METHOD_BADGE_STYLES: Record<ParsedEndpoint["method"], string> = {
   GET: "bg-blue-600/20 text-blue-400 border border-blue-600/30",
@@ -38,12 +64,25 @@ function createRowId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function extractPathParamNames(urlTemplate: string): string[] {
   const params = new Set<string>();
-  const matcher = /\{([^}]+)\}/g;
+  const matcher = /\{([^{}]+)\}/g;
   let match = matcher.exec(urlTemplate);
 
   while (match) {
+    const index = match.index;
+    const fullMatch = match[0] ?? "";
+    const previousChar = index > 0 ? urlTemplate[index - 1] : "";
+    const nextChar = urlTemplate[index + fullMatch.length] ?? "";
+    if (previousChar === "{" || nextChar === "}") {
+      match = matcher.exec(urlTemplate);
+      continue;
+    }
+
     const name = match[1]?.trim();
     if (name) {
       params.add(name);
@@ -55,14 +94,76 @@ function extractPathParamNames(urlTemplate: string): string[] {
 }
 
 function applyPathParamValues(urlTemplate: string, values: Record<string, string>): string {
-  return urlTemplate.replace(/\{([^}]+)\}/g, (_match, rawParam: string) => {
+  return urlTemplate.replace(/\{([^{}]+)\}/g, (match, rawParam: string, offset: number, whole: string) => {
+    const previousChar = offset > 0 ? whole[offset - 1] : "";
+    const nextChar = whole[offset + match.length] ?? "";
+    if (previousChar === "{" || nextChar === "}") {
+      return match;
+    }
+
     const key = String(rawParam).trim();
     const replacement = values[key];
-    if (replacement === undefined || replacement === "") {
+    if (replacement === undefined || replacement.trim() === "") {
       return `{${key}}`;
     }
-    return replacement;
+    return replacement.trim();
   });
+}
+
+function splitUrlParts(rawUrl: string): { template: string; query: string; hash: string } {
+  const hashIndex = rawUrl.indexOf("#");
+  const hash = hashIndex >= 0 ? rawUrl.slice(hashIndex) : "";
+  const withoutHash = hashIndex >= 0 ? rawUrl.slice(0, hashIndex) : rawUrl;
+  const queryIndex = withoutHash.indexOf("?");
+
+  if (queryIndex === -1) {
+    return {
+      template: withoutHash,
+      query: "",
+      hash
+    };
+  }
+
+  return {
+    template: withoutHash.slice(0, queryIndex),
+    query: withoutHash.slice(queryIndex + 1),
+    hash
+  };
+}
+
+function parseQueryEntries(query: string): Array<[string, string]> {
+  const params = new URLSearchParams(query);
+  const entries: Array<[string, string]> = [];
+  params.forEach((value, key) => {
+    entries.push([key, value]);
+  });
+  return entries;
+}
+
+function buildResolvedUrl(
+  template: string,
+  hash: string,
+  pathParamValues: Record<string, string>,
+  queryParams: QueryParamRow[],
+  extraQueryParams: Array<[string, string]>
+): string {
+  const baseUrl = applyPathParamValues(template, pathParamValues);
+  const searchParams = new URLSearchParams();
+
+  for (const [key, value] of extraQueryParams) {
+    if (key.trim()) {
+      searchParams.append(key, value);
+    }
+  }
+
+  for (const queryParam of queryParams) {
+    if (queryParam.included && queryParam.name.trim()) {
+      searchParams.append(queryParam.name, queryParam.value);
+    }
+  }
+
+  const query = searchParams.toString();
+  return `${baseUrl}${query ? `?${query}` : ""}${hash}`;
 }
 
 function normalizeEditableHeaders(headers: EditableHeader[]): Array<{ key: string; value: string; enabled: boolean }> {
@@ -91,6 +192,100 @@ function getResponseBadge(statusCode: string): string {
     return "bg-orange-600/20 text-orange-400 border border-orange-600/30";
   }
   return "bg-red-600/20 text-red-400 border border-red-600/30";
+}
+
+function getEnabledHeaderValue(
+  headers: Array<{ key: string; value: string; enabled: boolean }>,
+  name: string
+): string {
+  const match = headers.find(
+    (header) => header.enabled && header.key.trim().toLowerCase() === name.toLowerCase()
+  );
+  return match?.value ?? "";
+}
+
+function getBodyHint(contentType: string): string {
+  const normalized = contentType.toLowerCase();
+  if (normalized.includes("application/json")) {
+    return "Enter a JSON payload";
+  }
+  if (normalized.includes("application/x-www-form-urlencoded")) {
+    return "Enter URL-encoded key=value pairs";
+  }
+  if (normalized.includes("multipart/form-data")) {
+    return "Enter multipart/form-data values";
+  }
+  if (normalized.includes("xml")) {
+    return "Enter an XML payload";
+  }
+  return "Enter request body";
+}
+
+function isJsonSchemaCandidate(value: unknown): value is Record<string, unknown> {
+  return isObject(value) && ("$schema" in value || "properties" in value);
+}
+
+function generateExampleFromSchema(schema: unknown): unknown {
+  if (!isObject(schema)) {
+    return schema ?? "";
+  }
+
+  if (schema.example !== undefined) {
+    return schema.example;
+  }
+  if (schema.default !== undefined) {
+    return schema.default;
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum[0];
+  }
+
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    return generateExampleFromSchema(schema.oneOf[0]);
+  }
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    return generateExampleFromSchema(schema.anyOf[0]);
+  }
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    return generateExampleFromSchema(schema.allOf[0]);
+  }
+
+  const type = typeof schema.type === "string" ? schema.type : "";
+  if (type === "object" || isObject(schema.properties)) {
+    const properties = isObject(schema.properties) ? schema.properties : {};
+    const output: Record<string, unknown> = {};
+    for (const [key, propertySchema] of Object.entries(properties)) {
+      output[key] = generateExampleFromSchema(propertySchema);
+    }
+    return output;
+  }
+
+  if (type === "array") {
+    return [generateExampleFromSchema(schema.items)];
+  }
+
+  if (type === "integer" || type === "number") {
+    return 0;
+  }
+  if (type === "boolean") {
+    return false;
+  }
+
+  return "";
+}
+
+function parseJsonErrorLine(body: string, message: string): number | null {
+  const positionMatch = message.match(/position\s+(\d+)/i);
+  if (!positionMatch) {
+    return null;
+  }
+
+  const position = Number(positionMatch[1]);
+  if (Number.isNaN(position) || position < 0) {
+    return null;
+  }
+
+  return body.slice(0, position).split(/\r?\n/).length;
 }
 
 function SectionHeader({
@@ -135,12 +330,19 @@ export function EndpointDetail({
   const { emit } = useBridge();
 
   const [urlTemplate, setUrlTemplate] = useState("");
+  const [urlHashFragment, setUrlHashFragment] = useState("");
   const [pathParamValues, setPathParamValues] = useState<Record<string, string>>({});
-  const [activePathParam, setActivePathParam] = useState<string | null>(null);
+  const [queryParams, setQueryParams] = useState<QueryParamRow[]>([]);
+  const [extraQueryParams, setExtraQueryParams] = useState<Array<[string, string]>>([]);
   const [headers, setHeaders] = useState<EditableHeader[]>([]);
   const [bodyText, setBodyText] = useState("");
+  const [initialBodyText, setInitialBodyText] = useState("");
+  const [generatedFromSchema, setGeneratedFromSchema] = useState(false);
+  const [jsonValidation, setJsonValidation] = useState<JsonValidationState>({ status: "idle" });
   const [sectionsOpen, setSectionsOpen] = useState<Record<DetailSection, boolean>>({
     params: true,
+    pathParams: true,
+    queryParams: true,
     headers: true,
     body: true,
     responses: true
@@ -152,25 +354,72 @@ export function EndpointDetail({
   useEffect(() => {
     if (!endpoint) {
       setUrlTemplate("");
+      setUrlHashFragment("");
       setPathParamValues({});
-      setActivePathParam(null);
+      setQueryParams([]);
+      setExtraQueryParams([]);
       setHeaders([]);
       setBodyText("");
+      setInitialBodyText("");
+      setGeneratedFromSchema(false);
+      setJsonValidation({ status: "idle" });
       setExpandedResponses({});
       return;
     }
 
-    const template = endpoint.url;
-    const pathParams = extractPathParamNames(template);
+    const { template, query, hash } = splitUrlParts(endpoint.url);
+    const templatePathParams = extractPathParamNames(template);
+    const endpointPathParams = endpoint.parameters.filter((param) => param.location === "path");
+    const queryEntries = parseQueryEntries(query);
+    const queryMap = new Map(queryEntries);
+    const knownQueryNames = new Set(
+      endpoint.parameters
+        .filter((param) => param.location === "query")
+        .map((param) => param.name)
+    );
+
+    let nextBody = endpoint.requestBody ?? "";
+    let generated = false;
+    const isJsonRequest = endpoint.requestContentType?.toLowerCase().includes("application/json");
+    if (isJsonRequest && nextBody.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(nextBody);
+        if (isJsonSchemaCandidate(parsed)) {
+          const example = generateExampleFromSchema(parsed);
+          nextBody = JSON.stringify(example, null, 2);
+          generated = true;
+        }
+      } catch {
+        // Keep existing request body if it is not valid JSON.
+      }
+    }
 
     setUrlTemplate(template);
+    setUrlHashFragment(hash);
     setPathParamValues(
-      pathParams.reduce<Record<string, string>>((acc, name) => {
-        acc[name] = "";
+      templatePathParams.reduce<Record<string, string>>((acc, name) => {
+        const parameterExample = endpointPathParams.find((param) => param.name === name)?.example?.trim();
+        acc[name] = parameterExample || "";
         return acc;
       }, {})
     );
-    setActivePathParam(pathParams[0] ?? null);
+    setQueryParams(
+      endpoint.parameters
+        .filter((param) => param.location === "query")
+        .map((param) => {
+          const fromUrl = queryMap.get(param.name);
+          return {
+            id: createRowId(),
+            name: param.name,
+            required: param.required,
+            type: param.type,
+            description: param.description,
+            included: param.required || fromUrl !== undefined,
+            value: fromUrl ?? param.example ?? ""
+          };
+        })
+    );
+    setExtraQueryParams(queryEntries.filter(([name]) => !knownQueryNames.has(name)));
     setHeaders(
       endpoint.headers.map((header) => ({
         id: createRowId(),
@@ -179,17 +428,53 @@ export function EndpointDetail({
         enabled: header.enabled
       }))
     );
-    setBodyText(endpoint.requestBody ?? "");
+    setBodyText(nextBody);
+    setInitialBodyText(nextBody);
+    setGeneratedFromSchema(generated);
+    setJsonValidation({ status: "idle" });
     setExpandedResponses({});
   }, [endpoint]);
 
   const pathParams = useMemo(() => extractPathParamNames(urlTemplate), [urlTemplate]);
 
-  const resolvedUrl = useMemo(() => {
-    return applyPathParamValues(urlTemplate, pathParamValues);
-  }, [pathParamValues, urlTemplate]);
+  const pathParamMeta = useMemo(() => {
+    if (!endpoint) {
+      return new Map<string, { required: boolean; description?: string; type: string }>();
+    }
 
-  const urlModified = endpoint ? resolvedUrl !== endpoint.url || urlTemplate !== endpoint.url : false;
+    const lookup = new Map<string, { required: boolean; description?: string; type: string }>();
+    for (const param of endpoint.parameters) {
+      if (param.location === "path") {
+        lookup.set(param.name, {
+          required: param.required,
+          description: param.description,
+          type: param.type
+        });
+      }
+    }
+    return lookup;
+  }, [endpoint]);
+
+  const requiredPathParams = useMemo(
+    () =>
+      pathParams.filter((name) => {
+        const paramMeta = pathParamMeta.get(name);
+        return paramMeta ? paramMeta.required : true;
+      }),
+    [pathParamMeta, pathParams]
+  );
+
+  const missingRequiredPathParams = useMemo(
+    () => requiredPathParams.filter((name) => !pathParamValues[name]?.trim()),
+    [pathParamValues, requiredPathParams]
+  );
+
+  const resolvedUrl = useMemo(
+    () => buildResolvedUrl(urlTemplate, urlHashFragment, pathParamValues, queryParams, extraQueryParams),
+    [extraQueryParams, pathParamValues, queryParams, urlHashFragment, urlTemplate]
+  );
+
+  const urlModified = endpoint ? resolvedUrl !== endpoint.url : false;
 
   const normalizedOriginalHeaders = useMemo(() => {
     if (!endpoint) {
@@ -213,7 +498,13 @@ export function EndpointDetail({
     return JSON.stringify(normalizedEditedHeaders) !== JSON.stringify(normalizedOriginalHeaders);
   }, [endpoint, normalizedEditedHeaders, normalizedOriginalHeaders]);
 
-  const bodyModified = endpoint ? bodyText !== (endpoint.requestBody ?? "") : false;
+  const bodyModified = endpoint ? bodyText !== initialBodyText : false;
+  const effectiveContentType =
+    getEnabledHeaderValue(normalizedEditedHeaders, "Content-Type").trim() ||
+    endpoint?.requestContentType ||
+    "text/plain";
+  const authHeaderValue = getEnabledHeaderValue(normalizedEditedHeaders, "Authorization");
+  const showAuthWarning = Boolean(endpoint?.requiresAuth) && authHeaderValue.trim().length === 0;
 
   const editedEndpoint = useMemo<ParsedEndpoint | null>(() => {
     if (!endpoint) {
@@ -228,9 +519,10 @@ export function EndpointDetail({
         value: header.value,
         enabled: header.enabled
       })),
-      requestBody: bodyText
+      requestBody: bodyText,
+      requestContentType: effectiveContentType
     };
-  }, [bodyText, endpoint, normalizedEditedHeaders, resolvedUrl]);
+  }, [bodyText, effectiveContentType, endpoint, normalizedEditedHeaders, resolvedUrl]);
 
   const toggleSection = useCallback((section: DetailSection) => {
     setSectionsOpen((prev) => ({
@@ -240,12 +532,12 @@ export function EndpointDetail({
   }, []);
 
   const handleRun = useCallback(() => {
-    if (!editedEndpoint) {
+    if (!editedEndpoint || missingRequiredPathParams.length > 0) {
       return;
     }
 
     emit({ type: "runEndpoint", endpoint: editedEndpoint });
-  }, [editedEndpoint, emit]);
+  }, [editedEndpoint, emit, missingRequiredPathParams.length]);
 
   const handleAskAI = useCallback(() => {
     if (!endpoint) {
@@ -256,6 +548,56 @@ export function EndpointDetail({
     emit({ type: "switchToChat" });
   }, [emit, endpoint]);
 
+  const handleResetUrl = useCallback(() => {
+    if (!endpoint) {
+      return;
+    }
+
+    const { template, query, hash } = splitUrlParts(endpoint.url);
+    const pathParamNames = extractPathParamNames(template);
+    const queryEntries = parseQueryEntries(query);
+    const queryMap = new Map(queryEntries);
+    const knownQueryNames = new Set(
+      endpoint.parameters
+        .filter((param) => param.location === "query")
+        .map((param) => param.name)
+    );
+
+    setUrlTemplate(template);
+    setUrlHashFragment(hash);
+    setPathParamValues(
+      pathParamNames.reduce<Record<string, string>>((acc, name) => {
+        acc[name] = "";
+        return acc;
+      }, {})
+    );
+    setQueryParams((prev) =>
+      prev.map((row) => {
+        const fromUrl = queryMap.get(row.name);
+        return {
+          ...row,
+          included: row.required || fromUrl !== undefined,
+          value: fromUrl ?? row.value
+        };
+      })
+    );
+    setExtraQueryParams(queryEntries.filter(([name]) => !knownQueryNames.has(name)));
+  }, [endpoint]);
+
+  const handleValidateJson = useCallback(() => {
+    try {
+      JSON.parse(bodyText);
+      setJsonValidation({ status: "valid" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid JSON";
+      const line = parseJsonErrorLine(bodyText, message);
+      setJsonValidation({
+        status: "invalid",
+        message: line ? `Invalid JSON at line ${line}` : message
+      });
+    }
+  }, [bodyText]);
+
   if (!endpoint) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-vscode-descriptionFg">
@@ -265,7 +607,7 @@ export function EndpointDetail({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+    <div data-postchat-endpoint-detail="true" className="flex h-full min-h-0 flex-col overflow-y-auto">
       <div className="border-b border-vscode-panelBorder px-3 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className={["rounded px-2 py-0.5 text-xs font-semibold", METHOD_BADGE_STYLES[endpoint.method]].join(" ")}>
@@ -283,7 +625,18 @@ export function EndpointDetail({
           <button
             type="button"
             onClick={handleRun}
-            className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
+            disabled={missingRequiredPathParams.length > 0}
+            title={
+              missingRequiredPathParams.length > 0
+                ? "Fill in required parameters first"
+                : "Run request"
+            }
+            className={[
+              "rounded px-2.5 py-1 text-xs font-medium",
+              missingRequiredPathParams.length > 0
+                ? "cursor-not-allowed bg-vscode-buttonBg/60 text-vscode-buttonFg/70"
+                : "bg-vscode-buttonBg text-vscode-buttonFg hover:bg-vscode-buttonHover"
+            ].join(" ")}
           >
             ▶ Run Request
           </button>
@@ -302,77 +655,42 @@ export function EndpointDetail({
           <input
             value={resolvedUrl}
             onChange={(event) => {
-              const nextTemplate = event.target.value;
-              const nextParams = extractPathParamNames(nextTemplate);
-              setUrlTemplate(nextTemplate);
+              const { template, query, hash } = splitUrlParts(event.target.value);
+              const nextPathParams = extractPathParamNames(template);
+              const queryEntries = parseQueryEntries(query);
+              const queryMap = new Map(queryEntries);
+              const knownQueryParamNames = new Set(queryParams.map((param) => param.name));
+
+              setUrlTemplate(template);
+              setUrlHashFragment(hash);
               setPathParamValues((prev) => {
                 const next: Record<string, string> = {};
-                for (const param of nextParams) {
-                  next[param] = prev[param] ?? "";
+                for (const paramName of nextPathParams) {
+                  next[paramName] = prev[paramName] ?? "";
                 }
                 return next;
               });
-              if (nextParams.length > 0 && (!activePathParam || !nextParams.includes(activePathParam))) {
-                setActivePathParam(nextParams[0]);
-              }
-              if (nextParams.length === 0) {
-                setActivePathParam(null);
-              }
+              setQueryParams((prev) =>
+                prev.map((row) => {
+                  const fromUrl = queryMap.get(row.name);
+                  return {
+                    ...row,
+                    included: row.required || fromUrl !== undefined,
+                    value: fromUrl ?? row.value
+                  };
+                })
+              );
+              setExtraQueryParams(
+                queryEntries.filter(([name]) => !knownQueryParamNames.has(name))
+              );
             }}
             className="w-full border-none bg-transparent font-mono text-xs text-vscode-inputFg outline-none"
           />
 
-          {pathParams.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {pathParams.map((param) => (
-                <button
-                  key={param}
-                  type="button"
-                  onClick={() => setActivePathParam(param)}
-                  className={[
-                    "rounded px-1.5 py-0.5 font-mono text-[11px]",
-                    activePathParam === param
-                      ? "bg-vscode-buttonBg text-vscode-buttonFg"
-                      : "bg-vscode-listHover text-vscode-editorFg"
-                  ].join(" ")}
-                >
-                  {`{${param}}`}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {activePathParam ? (
-            <div className="mt-2 flex items-center gap-2">
-              <label className="text-[11px] text-vscode-descriptionFg">{`{${activePathParam}}`}</label>
-              <input
-                value={pathParamValues[activePathParam] ?? ""}
-                onChange={(event) =>
-                  setPathParamValues((prev) => ({
-                    ...prev,
-                    [activePathParam]: event.target.value
-                  }))
-                }
-                placeholder="Value"
-                className="min-w-0 flex-1 rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs text-vscode-inputFg"
-              />
-            </div>
-          ) : null}
-
           {urlModified ? (
             <button
               type="button"
-              onClick={() => {
-                setUrlTemplate(endpoint.url);
-                const names = extractPathParamNames(endpoint.url);
-                setPathParamValues(
-                  names.reduce<Record<string, string>>((acc, name) => {
-                    acc[name] = "";
-                    return acc;
-                  }, {})
-                );
-                setActivePathParam(names[0] ?? null);
-              }}
+              onClick={handleResetUrl}
               className="mt-2 text-xs text-vscode-linkFg underline"
             >
               Reset URL
@@ -422,7 +740,103 @@ export function EndpointDetail({
         </section>
       ) : null}
 
-      {endpoint.headers.length > 0 ? (
+      {pathParams.length > 0 ? (
+        <section className="border-b border-vscode-panelBorder">
+          <SectionHeader
+            title="Path Parameters"
+            isOpen={sectionsOpen.pathParams}
+            onToggle={() => toggleSection("pathParams")}
+          />
+          {sectionsOpen.pathParams ? (
+            <div className="space-y-2 p-3">
+              {pathParams.map((paramName) => {
+                const required = requiredPathParams.includes(paramName);
+                const missing = required && !pathParamValues[paramName]?.trim();
+                const meta = pathParamMeta.get(paramName);
+                return (
+                  <div key={paramName} className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-2">
+                    <label className="text-xs font-medium text-vscode-editorFg">
+                      {paramName}
+                      {required ? <span className="ml-1 text-red-400">*</span> : null}
+                    </label>
+                    <input
+                      value={pathParamValues[paramName] ?? ""}
+                      onChange={(event) =>
+                        setPathParamValues((prev) => ({
+                          ...prev,
+                          [paramName]: event.target.value
+                        }))
+                      }
+                      placeholder={meta?.description || "Value"}
+                      className={[
+                        "rounded border bg-vscode-inputBg px-2 py-1 text-xs text-vscode-inputFg",
+                        missing ? "border-red-500 outline-none ring-1 ring-red-500/50" : "border-vscode-inputBorder"
+                      ].join(" ")}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {queryParams.length > 0 ? (
+        <section className="border-b border-vscode-panelBorder">
+          <SectionHeader
+            title="Query Parameters"
+            isOpen={sectionsOpen.queryParams}
+            onToggle={() => toggleSection("queryParams")}
+          />
+          {sectionsOpen.queryParams ? (
+            <div className="space-y-2 p-3">
+              {queryParams.map((param) => (
+                <div key={param.id} className="grid grid-cols-[auto_120px_minmax(0,1fr)] items-center gap-2">
+                  <label className="flex items-center gap-2 text-xs text-vscode-editorFg">
+                    <input
+                      type="checkbox"
+                      checked={param.included}
+                      disabled={param.required}
+                      onChange={(event) =>
+                        setQueryParams((prev) =>
+                          prev.map((row) =>
+                            row.id === param.id ? { ...row, included: event.target.checked } : row
+                          )
+                        )
+                      }
+                    />
+                    <span className={param.required ? "font-semibold" : ""}>
+                      {param.name}
+                      {param.required ? <span className="ml-1 text-orange-300">*</span> : null}
+                    </span>
+                  </label>
+                  <span className="truncate text-[11px] text-vscode-descriptionFg">{param.type}</span>
+                  <input
+                    value={param.value}
+                    onChange={(event) =>
+                      setQueryParams((prev) =>
+                        prev.map((row) =>
+                          row.id === param.id ? { ...row, value: event.target.value } : row
+                        )
+                      )
+                    }
+                    placeholder={param.description || "Value"}
+                    disabled={!param.included}
+                    className={[
+                      "rounded border px-2 py-1 text-xs",
+                      param.included
+                        ? "border-vscode-inputBorder bg-vscode-inputBg text-vscode-inputFg"
+                        : "cursor-not-allowed border-vscode-inputBorder/40 bg-vscode-inputBg/40 text-vscode-descriptionFg"
+                    ].join(" ")}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {endpoint.headers.length > 0 || endpoint.requiresAuth ? (
         <section className="border-b border-vscode-panelBorder">
           <SectionHeader
             title="Headers"
@@ -452,58 +866,96 @@ export function EndpointDetail({
 
           {sectionsOpen.headers ? (
             <div className="p-3">
+              <datalist id="postchat-common-header-keys">
+                {COMMON_HEADER_NAMES.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+
+              {showAuthWarning ? (
+                <div
+                  className="mb-2 rounded border border-yellow-600/40 bg-yellow-600/10 px-2 py-1 text-xs text-yellow-300"
+                  title="This endpoint requires authentication"
+                >
+                  ⚠ This endpoint requires authentication
+                </div>
+              ) : null}
+
               <div className="space-y-2">
-                {headers.map((header) => (
-                  <div key={header.id} className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2">
-                    <input
-                      value={header.key}
-                      onChange={(event) =>
-                        setHeaders((prev) =>
-                          prev.map((row) =>
-                            row.id === header.id ? { ...row, key: event.target.value } : row
-                          )
-                        )
-                      }
-                      placeholder="Header key"
-                      className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs text-vscode-inputFg"
-                    />
-                    <input
-                      value={header.value}
-                      onChange={(event) =>
-                        setHeaders((prev) =>
-                          prev.map((row) =>
-                            row.id === header.id ? { ...row, value: event.target.value } : row
-                          )
-                        )
-                      }
-                      placeholder="Header value"
-                      className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs text-vscode-inputFg"
-                    />
-                    <label className="flex items-center gap-1 text-xs text-vscode-descriptionFg">
+                {headers.map((header) => {
+                  const isAuthorizationHeader = header.key.trim().toLowerCase() === "authorization";
+                  const isBearer = header.value.startsWith("Bearer ");
+                  const showRowAuthWarning =
+                    endpoint.requiresAuth && isAuthorizationHeader && header.value.trim().length === 0;
+                  return (
+                    <div key={header.id} className="grid grid-cols-[1fr_1fr_auto_auto_auto] items-center gap-2">
                       <input
-                        type="checkbox"
-                        checked={header.enabled}
+                        value={header.key}
                         onChange={(event) =>
                           setHeaders((prev) =>
                             prev.map((row) =>
-                              row.id === header.id ? { ...row, enabled: event.target.checked } : row
+                              row.id === header.id ? { ...row, key: event.target.value } : row
                             )
                           )
                         }
+                        list="postchat-common-header-keys"
+                        placeholder="Header key"
+                        className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs text-vscode-inputFg"
                       />
-                      enabled
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setHeaders((prev) => prev.filter((row) => row.id !== header.id))
-                      }
-                      className="rounded px-1 py-0.5 text-xs text-vscode-descriptionFg hover:bg-vscode-listHover"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
+                      <input
+                        value={header.value}
+                        onChange={(event) =>
+                          setHeaders((prev) =>
+                            prev.map((row) =>
+                              row.id === header.id ? { ...row, value: event.target.value } : row
+                            )
+                          )
+                        }
+                        placeholder="Header value"
+                        className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs text-vscode-inputFg"
+                      />
+                      {isAuthorizationHeader ? (
+                        <span
+                          className="text-xs"
+                          title={
+                            isBearer
+                              ? "Bearer token detected"
+                              : showRowAuthWarning
+                              ? "This endpoint requires authentication"
+                              : "Authorization header"
+                          }
+                        >
+                          {isBearer ? "🔑" : showRowAuthWarning ? "⚠️" : "•"}
+                        </span>
+                      ) : (
+                        <span aria-hidden="true" />
+                      )}
+                      <label className="flex items-center gap-1 text-xs text-vscode-descriptionFg">
+                        <input
+                          type="checkbox"
+                          checked={header.enabled}
+                          onChange={(event) =>
+                            setHeaders((prev) =>
+                              prev.map((row) =>
+                                row.id === header.id ? { ...row, enabled: event.target.checked } : row
+                              )
+                            )
+                          }
+                        />
+                        enabled
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHeaders((prev) => prev.filter((row) => row.id !== header.id))
+                        }
+                        className="rounded px-1 py-0.5 text-xs text-vscode-descriptionFg hover:bg-vscode-listHover"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
 
               <button
@@ -538,7 +990,10 @@ export function EndpointDetail({
               bodyModified ? (
                 <button
                   type="button"
-                  onClick={() => setBodyText(endpoint.requestBody ?? "")}
+                  onClick={() => {
+                    setBodyText(initialBodyText);
+                    setJsonValidation({ status: "idle" });
+                  }}
                   className="text-xs text-vscode-linkFg underline"
                 >
                   Reset Body
@@ -549,31 +1004,57 @@ export function EndpointDetail({
 
           {sectionsOpen.body ? (
             <div className="p-3">
-              <div className="mb-2 flex items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="rounded bg-vscode-badgeBg px-1.5 py-0.5 text-[11px] text-vscode-badgeFg">
-                  {endpoint.requestContentType || "text/plain"}
+                  {effectiveContentType}
                 </span>
-                {endpoint.requestContentType?.toLowerCase().includes("application/json") ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      try {
-                        const parsed = JSON.parse(bodyText);
-                        setBodyText(JSON.stringify(parsed, null, 2));
-                      } catch {
-                        // Keep current body if invalid JSON.
-                      }
-                    }}
-                    className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
-                  >
-                    Format JSON
-                  </button>
+                {generatedFromSchema ? (
+                  <span className="rounded border border-vscode-panelBorder bg-vscode-inputBg px-1.5 py-0.5 text-[11px] text-vscode-descriptionFg">
+                    Generated from schema
+                  </span>
+                ) : null}
+                {effectiveContentType.toLowerCase().includes("application/json") ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          const parsed = JSON.parse(bodyText);
+                          setBodyText(JSON.stringify(parsed, null, 2));
+                          setJsonValidation({ status: "idle" });
+                        } catch {
+                          // Keep current body if invalid JSON.
+                        }
+                      }}
+                      className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+                    >
+                      Format JSON
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleValidateJson}
+                      className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+                    >
+                      Validate JSON
+                    </button>
+                  </>
                 ) : null}
               </div>
 
+              {jsonValidation.status === "valid" ? (
+                <p className="mb-2 text-xs text-green-400">✓ Valid JSON</p>
+              ) : null}
+              {jsonValidation.status === "invalid" ? (
+                <p className="mb-2 text-xs text-red-400">{jsonValidation.message}</p>
+              ) : null}
+
               <textarea
                 value={bodyText}
-                onChange={(event) => setBodyText(event.target.value)}
+                onChange={(event) => {
+                  setBodyText(event.target.value);
+                  setJsonValidation({ status: "idle" });
+                }}
+                placeholder={getBodyHint(effectiveContentType)}
                 className="h-44 w-full rounded border border-vscode-panelBorder bg-vscode-inputBg px-2 py-1 font-mono text-xs text-vscode-inputFg"
               />
             </div>
@@ -590,19 +1071,14 @@ export function EndpointDetail({
 
         {sectionsOpen.responses ? (
           <div className="space-y-3 p-3">
-            {liveError ? (
-              <div className="rounded border border-vscode-errorBorder bg-vscode-errorBg px-3 py-2 text-xs text-vscode-errorFg">
-                Request failed: {liveError}
-              </div>
-            ) : null}
-
-            {effectiveLiveResult ? (
+            {effectiveLiveResult || liveError ? (
               <div>
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-vscode-descriptionFg">
                   Live Response
                 </h3>
                 <ResponseViewer
                   result={effectiveLiveResult}
+                  error={liveError}
                   requestName={endpoint.name}
                   onSendToAI={onSendToAI}
                 />
@@ -619,43 +1095,49 @@ export function EndpointDetail({
               const isOpen = expandedResponses[key] ?? false;
 
               return (
-                <article key={key} className="rounded border border-vscode-panelBorder p-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={["rounded px-2 py-0.5 text-xs font-semibold", getResponseBadge(response.statusCode)].join(" ")}>
+                <article key={key} className="rounded border border-vscode-panelBorder bg-vscode-inputBg/30">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedResponses((prev) => ({
+                        ...prev,
+                        [key]: !isOpen
+                      }))
+                    }
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left"
+                  >
+                    <span
+                      className={[
+                        "rounded px-1.5 py-0.5 text-[11px] font-semibold",
+                        getResponseBadge(response.statusCode)
+                      ].join(" ")}
+                    >
                       {response.statusCode}
                     </span>
-                    <p className="text-sm text-vscode-editorFg">{response.description || "(no description)"}</p>
-                    {hasContent ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedResponses((prev) => ({
-                            ...prev,
-                            [key]: !isOpen
-                          }))
-                        }
-                        className="ml-auto text-xs text-vscode-linkFg underline"
-                      >
-                        {isOpen ? "Hide details" : "Show details"}
-                      </button>
-                    ) : null}
-                  </div>
+                    <span className="text-xs text-vscode-editorFg">{response.description || "Response"}</span>
+                    <span className="ml-auto text-xs text-vscode-descriptionFg">
+                      {hasContent ? (isOpen ? "Hide" : "Show") : "No body"}
+                    </span>
+                  </button>
 
-                  {isOpen ? (
-                    <div className="mt-2 space-y-2 rounded border border-vscode-panelBorder bg-vscode-inputBg/50 p-2">
+                  {isOpen && hasContent ? (
+                    <div className="space-y-2 border-t border-vscode-panelBorder px-3 py-2">
                       {response.bodySchema ? (
                         <div>
-                          <p className="mb-1 text-[11px] font-semibold uppercase text-vscode-descriptionFg">Schema</p>
-                          <pre className="m-0 whitespace-pre-wrap font-mono text-xs text-vscode-editorFg">
+                          <p className="mb-1 text-[11px] uppercase tracking-wide text-vscode-descriptionFg">
+                            Schema
+                          </p>
+                          <pre className="max-h-52 overflow-auto rounded bg-vscode-editorBg p-2 font-mono text-[11px] text-vscode-editorFg">
                             {response.bodySchema}
                           </pre>
                         </div>
                       ) : null}
-
                       {response.example ? (
                         <div>
-                          <p className="mb-1 text-[11px] font-semibold uppercase text-vscode-descriptionFg">Example</p>
-                          <pre className="m-0 whitespace-pre-wrap font-mono text-xs text-vscode-editorFg">
+                          <p className="mb-1 text-[11px] uppercase tracking-wide text-vscode-descriptionFg">
+                            Example
+                          </p>
+                          <pre className="max-h-52 overflow-auto rounded bg-vscode-editorBg p-2 font-mono text-[11px] text-vscode-editorFg">
                             {response.example}
                           </pre>
                         </div>
