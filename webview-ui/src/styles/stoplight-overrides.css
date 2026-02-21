@@ -1,0 +1,31 @@
+.postchat-stoplight-wrapper {
+  --color-canvas-100: var(--vscode-editor-background);
+  --color-canvas-200: var(--vscode-sideBar-background);
+  --color-canvas-300: var(--vscode-editorWidget-background);
+  --color-text: var(--vscode-editor-foreground);
+  --color-text-muted: var(--vscode-descriptionForeground);
+  --color-text-light: var(--vscode-disabledForeground);
+  --color-primary-light: var(--vscode-button-background);
+  --color-primary: var(--vscode-button-background);
+  --color-primary-dark: var(--vscode-button-hoverBackground);
+  --color-border: var(--vscode-widget-border);
+  --color-code-bg: var(--vscode-textCodeBlock-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+.postchat-stoplight-wrapper .sl-bg-canvas-100 {
+  background-color: var(--vscode-sideBar-background) !important;
+}
+
+.postchat-stoplight-wrapper .sl-text-base {
+  color: var(--vscode-editor-foreground) !important;
+}
+
+.postchat-stoplight-wrapper .TryItPanel {
+  display: none !important;
+}
+
+.postchat-stoplight-wrapper a {
+  color: var(--vscode-textLink-foreground);
+}

@@ -37,7 +37,15 @@ export function ExplorerPanel({
       />
     );
   } else if (specType === "openapi3" || specType === "swagger2") {
-    content = <StoplightExplorer rawSpec={rawSpec} specType={specType} />;
+    content = (
+      <StoplightExplorer
+        rawSpec={rawSpec ?? ""}
+        specType={specType}
+        parsedCollection={parsedCollection}
+        onRunRequest={onRunRequest}
+        onAskAI={onAskAI}
+      />
+    );
   } else {
     content = <ExplorerEmptyState />;
   }
