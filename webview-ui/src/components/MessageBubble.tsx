@@ -31,7 +31,8 @@ const HTTP_METHOD_URL_PATTERN =
 const SEPARATE_METHOD_URL_PATTERN =
   /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b[\s\S]*?\*\*URL:\*\*\s*`([^`]+)`/i;
 
-const EXPLORER_ENDPOINT_PATTERN = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+([\/][^\s,)]+)/gi;
+const EXPLORER_ENDPOINT_PATTERN =
+  /[`*|]*\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b[`*|]*\s+[`*|]*\s*(https?:\/\/[^\s`*,)|]+|\/[^\s`*,)|]+)/gi;
 
 function createMarkdownComponents(showSnippetToolbar: boolean): Components {
   return {
@@ -91,6 +92,20 @@ function splitPathSegments(path: string): string[] {
     .filter((segment) => segment.length > 0);
 }
 
+function normalizeMentionedPath(rawPathOrUrl: string): string {
+  const trimmed = rawPathOrUrl.trim();
+  if (trimmed.startsWith("/")) {
+    return normalizePath(trimmed);
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    return normalizePath(parsed.pathname || "/");
+  } catch {
+    return normalizePath(trimmed);
+  }
+}
+
 function endpointPathMatches(collectionPath: string, mentionedPath: string): boolean {
   const normalizedCollectionPath = normalizePath(collectionPath);
   const normalizedMentionedPath = normalizePath(mentionedPath);
@@ -110,7 +125,14 @@ function endpointPathMatches(collectionPath: string, mentionedPath: string): boo
     const collectionSegment = collectionSegments[index];
     const mentionedSegment = mentionedSegments[index];
 
-    if (collectionSegment.startsWith("{") && collectionSegment.endsWith("}")) {
+    const isCollectionParam =
+      (collectionSegment.startsWith("{") && collectionSegment.endsWith("}")) ||
+      collectionSegment.startsWith(":");
+    const isMentionedParam =
+      (mentionedSegment.startsWith("{") && mentionedSegment.endsWith("}")) ||
+      mentionedSegment.startsWith(":");
+
+    if (isCollectionParam || isMentionedParam) {
       continue;
     }
 
@@ -131,7 +153,7 @@ function extractEndpointMentions(text: string): ExtractedEndpointMention[] {
   let match = EXPLORER_ENDPOINT_PATTERN.exec(text);
   while (match) {
     const method = (match[1] ?? "").toUpperCase();
-    const path = normalizePath(match[2] ?? "");
+    const path = normalizeMentionedPath(match[2] ?? "");
     if (method && path) {
       const key = `${method} ${path}`;
       if (!dedupe.has(key)) {

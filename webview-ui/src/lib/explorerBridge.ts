@@ -5,6 +5,7 @@ import {
   useContext,
   useMemo,
   useReducer,
+  useRef,
   type PropsWithChildren
 } from "react";
 import type { ExecutionResult } from "../components/RequestResult";
@@ -60,14 +61,16 @@ function bridgeReducer(state: BridgeState, action: BridgeAction): BridgeState {
 
 export function BridgeProvider({ children }: PropsWithChildren): JSX.Element {
   const [state, dispatch] = useReducer(bridgeReducer, { listeners: new Map<number, BridgeHandler>() });
+  const listenersRef = useRef(state.listeners);
+  listenersRef.current = state.listeners;
 
   const emit = useCallback(
     (event: BridgeEvent) => {
-      for (const handler of state.listeners.values()) {
+      for (const handler of listenersRef.current.values()) {
         handler(event);
       }
     },
-    [state.listeners]
+    []
   );
 
   const subscribe = useCallback((handler: BridgeHandler) => {

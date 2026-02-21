@@ -25,7 +25,10 @@ type ChatPanelProps = {
   toastMessage?: string;
   messages: Message[];
   isThinking: boolean;
-  executionResults: Record<string, { request: ExecutableRequest; result: ExecutionResult }>;
+  executionResults: Record<
+    string,
+    { request: ExecutableRequest; result: ExecutionResult; endpointId?: string | null }
+  >;
   pendingExecutionName: string | null;
   onRunRequest: (method: string, url: string) => void;
   onSend: (text: string) => void;
