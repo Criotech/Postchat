@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChatPanel } from "./components/ChatPanel";
+import { ExplorerPanel } from "./components/ExplorerPanel";
 import { Header } from "./components/Header";
-import { InputBar } from "./components/InputBar";
-import { MessageList } from "./components/MessageList";
 import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
-import { SecretsWarningModal } from "./components/SecretsWarningModal";
-import { SettingsPanel } from "./components/SettingsPanel";
 import type { ConfigValues } from "./components/SettingsPanel";
-import { SuggestedPrompts } from "./components/SuggestedPrompts";
 import { resolveSlashCommand } from "./lib/slashCommands";
+import type { ParsedCollection, SpecType } from "./types/spec";
 import { vscode } from "./vscode";
 import type { Message } from "./types";
 
@@ -17,7 +15,8 @@ type SecretFinding = {
   preview: string;
 };
 
-type CollectionSpecType = "postman" | "openapi3" | "swagger2";
+type AppTab = "chat" | "explorer";
+type CollectionSpecType = Extract<SpecType, "postman" | "openapi3" | "swagger2">;
 
 type IncomingMessage =
   | { command: "addMessage"; role: "user" | "assistant"; text: string }
@@ -33,6 +32,7 @@ type IncomingMessage =
       authSchemes?: Array<{ type: string; name: string; details: Record<string, string> }>;
       rawSpec?: string;
     }
+  | { command: "collectionData"; collection: ParsedCollection | null }
   | { command: "environmentLoaded"; name: string }
   | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "showSuggestions"; suggestions: string[] }
@@ -63,9 +63,17 @@ function createId(): string {
 export default function App(): JSX.Element {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
+  const [activeTab, setActiveTab] = useState<AppTab>("chat");
   const [collectionName, setCollectionName] = useState<string | undefined>();
   const [collectionPath, setCollectionPath] = useState<string | undefined>();
   const [collectionSpecType, setCollectionSpecType] = useState<CollectionSpecType>("postman");
+  const [specType, setSpecType] = useState<SpecType | null>(null);
+  const [parsedCollection, setParsedCollection] = useState<ParsedCollection | null>(null);
+  const [rawSpec, setRawSpec] = useState<string | null>(null);
+  const [endpointCount, setEndpointCount] = useState<number | null>(null);
+  const [authSchemes, setAuthSchemes] = useState<
+    Array<{ type: string; name: string; details: Record<string, string> }>
+  >([]);
   const [environmentName, setEnvironmentName] = useState<string | undefined>();
   const [activeProvider, setActiveProvider] = useState<string>("anthropic");
   const [activeModel, setActiveModel] = useState<string>("claude-sonnet-4-5");
@@ -85,6 +93,8 @@ export default function App(): JSX.Element {
   const [queuedMessage, setQueuedMessage] = useState<string | undefined>();
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
+  const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
+  const tabToastTimeoutRef = useRef<number | null>(null);
 
   // Request execution state
   const [pendingExecution, setPendingExecution] = useState<ExecutableRequest | null>(null);
@@ -118,8 +128,31 @@ export default function App(): JSX.Element {
           setCollectionName(message.name);
           setCollectionPath(message.path);
           setCollectionSpecType(message.specType);
+          setSpecType(message.specType);
+          setEndpointCount(message.endpointCount ?? null);
+          setAuthSchemes(message.authSchemes ?? []);
+          setRawSpec(
+            message.specType === "openapi3" || message.specType === "swagger2"
+              ? message.rawSpec ?? null
+              : null
+          );
+          setParsedCollection(null);
           setHasSentFirstMessage(false);
           setError(undefined);
+          vscode.postMessage({ command: "getCollectionData" });
+          break;
+        case "collectionData":
+          setParsedCollection(message.collection);
+          if (message.collection) {
+            setSpecType(message.collection.specType);
+            if (
+              (message.collection.specType === "openapi3" ||
+                message.collection.specType === "swagger2") &&
+              message.collection.rawSpec
+            ) {
+              setRawSpec(message.collection.rawSpec);
+            }
+          }
           break;
         case "environmentLoaded":
           setEnvironmentName(message.name);
@@ -194,6 +227,14 @@ export default function App(): JSX.Element {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [appendMessage]);
+
+  useEffect(() => {
+    return () => {
+      if (tabToastTimeoutRef.current !== null) {
+        window.clearTimeout(tabToastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleExecuteRequest = useCallback((request: ExecutableRequest) => {
     setPendingExecution(request);
@@ -302,6 +343,26 @@ export default function App(): JSX.Element {
     setIsSettingsOpen((prev) => !prev);
   }, []);
 
+  const handleTabChange = useCallback(
+    (tab: AppTab) => {
+      if (tab === "explorer" && !collectionName) {
+        setTabToastMessage("Load a Postman collection or OpenAPI spec to use the Explorer");
+        if (tabToastTimeoutRef.current !== null) {
+          window.clearTimeout(tabToastTimeoutRef.current);
+        }
+        tabToastTimeoutRef.current = window.setTimeout(() => {
+          setTabToastMessage(undefined);
+          tabToastTimeoutRef.current = null;
+        }, 2500);
+        return;
+      }
+
+      setActiveTab(tab);
+      setTabToastMessage(undefined);
+    },
+    [collectionName]
+  );
+
   const handleConfigChange = useCallback((key: string, value: string) => {
     // Map VS Code setting keys to local ConfigValues keys where they differ
     const localKey = key === "apiKey" ? "anthropicApiKey" : key;
@@ -332,15 +393,13 @@ export default function App(): JSX.Element {
     vscode.postMessage({ command: "cancelSend" });
   }, []);
 
-  const containerClasses = useMemo(
-    () =>
-      "flex h-screen w-full flex-col bg-vscode-editorBg text-vscode-editorFg",
-    []
-  );
+  const showSuggestions =
+    !hasSentFirstMessage && messages.filter((msg) => msg.role === "user").length === 0;
 
   return (
-    <div className={containerClasses}>
+    <div className="flex flex-col h-screen bg-vscode-editorBg text-vscode-editorFg">
       <Header
+        activeTab={activeTab}
         collectionName={collectionName}
         collectionPath={collectionPath}
         collectionSpecType={collectionSpecType}
@@ -348,41 +407,46 @@ export default function App(): JSX.Element {
         activeProvider={activeProvider}
         activeModel={activeModel}
         isSettingsOpen={isSettingsOpen}
+        onTabChange={handleTabChange}
         onLoadCollection={handleLoadCollection}
         onLoadEnvironment={handleLoadEnvironment}
         onClearChat={handleClearChat}
         onSettingsToggle={handleSettingsToggle}
       />
 
-      {isSettingsOpen ? (
-        <SettingsPanel config={configValues} onConfigChange={handleConfigChange} />
-      ) : null}
+      <main className="flex-1 overflow-hidden">
+        {activeTab === "chat" ? (
+          <ChatPanel
+            isSettingsOpen={isSettingsOpen}
+            configValues={configValues}
+            onConfigChange={handleConfigChange}
+            error={error}
+            showSuggestions={showSuggestions}
+            suggestions={suggestions}
+            onSuggestedPrompt={handleSuggestedPrompt}
+            toastMessage={tabToastMessage}
+            messages={messages}
+            isThinking={isThinking}
+            executionResults={executionResults}
+            pendingExecutionName={pendingExecution?.name ?? null}
+            onRunRequest={handleRunRequestFromBubble}
+            onSend={handleSend}
+            hasCollection={Boolean(collectionName)}
+            isSecretsModalOpen={isSecretsModalOpen}
+            secretFindings={secretFindings}
+            onConfirmSend={handleConfirmSend}
+            onCancelSend={handleCancelSend}
+          />
+        ) : null}
 
-      {error ? (
-        <div className="mx-3 mt-2 rounded border border-vscode-errorBorder bg-vscode-errorBg px-3 py-2 text-sm text-vscode-errorFg">
-          {error}
-        </div>
-      ) : null}
-
-      {!hasSentFirstMessage && messages.filter((msg) => msg.role === "user").length === 0 ? (
-        <SuggestedPrompts suggestions={suggestions} onSelect={handleSuggestedPrompt} />
-      ) : null}
-
-      <MessageList
-        messages={messages}
-        isThinking={isThinking}
-        executionResults={executionResults}
-        pendingExecutionName={pendingExecution?.name ?? null}
-        onRunRequest={handleRunRequestFromBubble}
-      />
-      <InputBar onSend={handleSend} isThinking={isThinking} hasCollection={Boolean(collectionName)} />
-      {isSecretsModalOpen ? (
-        <SecretsWarningModal
-          findings={secretFindings}
-          onSendAnyway={handleConfirmSend}
-          onCancel={handleCancelSend}
-        />
-      ) : null}
+        {activeTab === "explorer" ? (
+          <ExplorerPanel
+            parsedCollection={parsedCollection}
+            rawSpec={rawSpec}
+            specType={specType}
+          />
+        ) : null}
+      </main>
     </div>
   );
 }

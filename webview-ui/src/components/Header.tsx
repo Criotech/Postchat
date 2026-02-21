@@ -14,9 +14,11 @@ type HeaderProps = {
   collectionPath?: string;
   collectionSpecType: "postman" | "openapi3" | "swagger2";
   environmentName?: string;
+  activeTab: "chat" | "explorer";
   activeProvider?: string;
   activeModel?: string;
   isSettingsOpen: boolean;
+  onTabChange: (tab: "chat" | "explorer") => void;
   onLoadCollection: () => void;
   onLoadEnvironment: () => void;
   onClearChat: () => void;
@@ -28,9 +30,11 @@ export function Header({
   collectionPath,
   collectionSpecType,
   environmentName,
+  activeTab,
   activeProvider,
   activeModel,
   isSettingsOpen,
+  onTabChange,
   onLoadCollection,
   onLoadEnvironment,
   onClearChat,
@@ -39,6 +43,16 @@ export function Header({
   const providerLabel = activeProvider ? (PROVIDER_DISPLAY[activeProvider] ?? activeProvider) : null;
   const modelLabel = activeModel ? abbreviateModel(activeModel) : null;
   const collectionIcon = collectionSpecType === "postman" ? "📦" : "📄";
+  const isExplorerAvailable = Boolean(collectionName);
+
+  const tabButtonClasses = (tab: "chat" | "explorer", isDisabled = false): string =>
+    [
+      "border-b-2 px-3 py-2 text-xs font-medium transition-colors",
+      tab === activeTab
+        ? "border-b-[var(--vscode-focusBorder)] text-[var(--vscode-tab-activeForeground)]"
+        : "border-b-transparent text-[var(--vscode-tab-inactiveForeground)] hover:text-[var(--vscode-tab-activeForeground)]",
+      isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+    ].join(" ");
 
   return (
     <header className="flex flex-col border-b border-vscode-panelBorder">
@@ -139,6 +153,25 @@ export function Header({
             </svg>
           </button>
         </div>
+      </div>
+
+      <div className="flex items-center gap-1 border-t border-vscode-panelBorder bg-[var(--vscode-editorGroupHeader-tabsBackground)] px-2">
+        <button
+          type="button"
+          onClick={() => onTabChange("chat")}
+          className={tabButtonClasses("chat")}
+        >
+          💬 Chat
+        </button>
+        <button
+          type="button"
+          aria-disabled={!isExplorerAvailable}
+          title={isExplorerAvailable ? "Explorer" : "Load a collection to use the Explorer"}
+          onClick={() => onTabChange("explorer")}
+          className={tabButtonClasses("explorer", !isExplorerAvailable)}
+        >
+          🗂️ Explorer
+        </button>
       </div>
 
       {providerLabel && modelLabel ? (

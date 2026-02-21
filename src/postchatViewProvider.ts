@@ -35,6 +35,7 @@ const UNRECOGNIZED_SPEC_ERROR =
 type IncomingWebviewMessage =
   | { command: "loadCollection" }
   | { command: "loadEnvironment" }
+  | { command: "getCollectionData" }
   | { command: "sendMessage"; text?: string }
   | { command: "runRequest"; requestName?: string }
   | { command: "executeRequest"; request: ExecutableRequest }
@@ -209,6 +210,14 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "loadEnvironment":
         await this.handleLoadEnvironment();
+        break;
+      case "getCollectionData":
+        this.postToWebview({
+          command: "collectionData",
+          collection: this.parsedCollection
+            ? (JSON.parse(JSON.stringify(this.parsedCollection)) as ParsedCollection)
+            : null
+        });
         break;
       case "clearChat":
         this.conversationHistory = [];
