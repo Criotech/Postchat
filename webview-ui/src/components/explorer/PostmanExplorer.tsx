@@ -237,7 +237,7 @@ export function PostmanExplorer({ collection, onSendToAI: _onSendToAI }: Postman
     <div className="flex h-full min-h-0 flex-col">
       <CollectionSummary collection={collection} />
 
-      <div className="min-h-0 flex-1 overflow-hidden border-t border-vscode-panelBorder">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <EndpointSidebar
           endpoints={collection.endpoints}
           selectedId={selectedEndpointId}

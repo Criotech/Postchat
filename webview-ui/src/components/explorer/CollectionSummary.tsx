@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { Copy, Check } from "lucide-react";
 import type { ParsedCollection } from "../../types/spec";
 
 type CollectionSummaryProps = {
@@ -44,6 +45,16 @@ function getSpecBadge(collection: ParsedCollection): { label: string; className:
   };
 }
 
+function Separator() {
+  return (
+    <span
+      className="mx-0.5 inline-block h-3 w-px shrink-0"
+      style={{ background: "var(--vscode-panelSection-border, rgba(128,128,128,0.25))" }}
+      aria-hidden="true"
+    />
+  );
+}
+
 export function CollectionSummary({ collection, compact = false }: CollectionSummaryProps): JSX.Element | null {
   const [copied, setCopied] = useState(false);
 
@@ -82,9 +93,9 @@ export function CollectionSummary({ collection, compact = false }: CollectionSum
   const specBadge = getSpecBadge(collection);
 
   return (
-    <div className="border-b border-vscode-panelBorder bg-vscode-inputBg/40 px-3 py-2 text-xs text-vscode-descriptionFg">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className={["rounded border px-1.5 py-0.5 text-[10px] font-semibold", specBadge.className].join(" ")}>
+    <div className="border-b border-vscode-panelBorder px-3 py-2 text-[11px] text-vscode-descriptionFg">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className={["shrink-0 rounded-full border px-2 py-[1px] text-[10px] font-semibold", specBadge.className].join(" ")}>
           {specBadge.label}
         </span>
 
@@ -93,12 +104,12 @@ export function CollectionSummary({ collection, compact = false }: CollectionSum
         ) : collection.specType === "postman" ? (
           <>
             <span className="truncate font-medium text-vscode-editorFg">{summary.title}</span>
-            <span className="opacity-70">·</span>
-            <span>{summary.endpointCount} endpoints</span>
-            <span className="opacity-70">·</span>
-            <span>{summary.folderCount} folders</span>
-            <span className="opacity-70">·</span>
-            <span>{summary.authType}</span>
+            <Separator />
+            <span className="shrink-0">{summary.endpointCount} endpoints</span>
+            <Separator />
+            <span className="shrink-0">{summary.folderCount} folders</span>
+            <Separator />
+            <span className="shrink-0">{summary.authType}</span>
           </>
         ) : (
           <>
@@ -106,18 +117,23 @@ export function CollectionSummary({ collection, compact = false }: CollectionSum
               {summary.title}
               {collection.version ? ` v${collection.version}` : ""}
             </span>
-            <span className="opacity-70">·</span>
-            <span>{summary.endpointCount} operations</span>
-            <span className="opacity-70">·</span>
-            <span>{collection.specType === "openapi3" ? "OpenAPI 3.0" : "Swagger 2.0"}</span>
-            <span className="opacity-70">·</span>
+            <Separator />
+            <span className="shrink-0">{summary.endpointCount} operations</span>
+            <Separator />
+            <span className="shrink-0">{collection.specType === "openapi3" ? "OpenAPI 3.0" : "Swagger 2.0"}</span>
+            <Separator />
             <button
               type="button"
               onClick={handleCopyBaseUrl}
-              className="max-w-[40%] truncate align-bottom text-vscode-linkFg underline decoration-dotted underline-offset-2"
+              className="group/copy inline-flex max-w-[40%] items-center gap-1 truncate text-vscode-linkFg hover:underline"
               title={copied ? "Copied!" : `Copy base URL: ${summary.baseUrl}`}
             >
-              {summary.baseUrl}
+              <span className="truncate">{summary.baseUrl}</span>
+              {copied ? (
+                <Check size={11} className="shrink-0 text-green-400" />
+              ) : (
+                <Copy size={10} className="shrink-0 opacity-0 group-hover/copy:opacity-100" />
+              )}
             </button>
           </>
         )}
