@@ -356,18 +356,33 @@ export function ResponsePanel({
 }
 
 function StatusBar({ result, sizeKb }: { result: ExecutionResult; sizeKb: number }): JSX.Element {
-  const statusTone =
-    result.status >= 500
-      ? "bg-red-700/20 text-red-300"
-      : result.status >= 400
-        ? "bg-orange-700/20 text-orange-300"
-        : result.status >= 300
-          ? "bg-blue-700/20 text-blue-300"
-          : "bg-green-700/20 text-green-300";
+  const statusStyle =
+    result.status >= 400
+      ? {
+          backgroundColor: "var(--vscode-inputValidation-errorBackground)",
+          color: "var(--vscode-inputValidation-errorForeground)",
+          borderColor: "var(--vscode-inputValidation-errorBorder)"
+        }
+      : result.status >= 300
+        ? {
+            backgroundColor: "var(--vscode-editorWidget-background)",
+            color: "var(--vscode-editor-foreground)",
+            borderColor: "var(--vscode-focusBorder)"
+          }
+        : {
+            backgroundColor: "var(--vscode-button-secondaryBackground)",
+            color: "var(--vscode-button-secondaryForeground)",
+            borderColor: "var(--vscode-panel-border)"
+          };
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded border border-vscode-panelBorder bg-vscode-card px-2 py-1 text-xs">
-      <span className={`rounded px-2 py-0.5 font-medium ${statusTone}`}>{result.status}</span>
+      <span
+        className="rounded border px-2 py-0.5 font-medium"
+        style={statusStyle}
+      >
+        {result.status}
+      </span>
       <span className="font-medium">{result.statusText || "Unknown"}</span>
       <span className="ml-auto text-vscode-muted">{result.durationMs} ms</span>
       <span className="text-vscode-muted">{sizeKb} KB</span>

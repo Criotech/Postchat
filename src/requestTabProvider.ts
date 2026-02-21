@@ -17,7 +17,8 @@ type RequestTabMessage =
     }
   | { command: "saveToCollection" }
   | { command: "copySnippet" }
-  | { command: "tabReady" };
+  | { command: "tabReady" }
+  | { command: "refreshEndpointData" };
 
 const ENVIRONMENT_STATE_KEY = "postchat.environmentVariables";
 
@@ -33,7 +34,8 @@ export class RequestTabProvider {
   openRequestTab(endpoint: ParsedEndpoint): void {
     const existingPanel = this.openTabs.get(endpoint.id);
     if (existingPanel) {
-      existingPanel.reveal();
+      existingPanel.reveal(vscode.ViewColumn.One);
+      void existingPanel.webview.postMessage({ command: "flashHighlight" });
       return;
     }
 
@@ -41,7 +43,7 @@ export class RequestTabProvider {
 
     const panel = vscode.window.createWebviewPanel(
       "postchat.requestTab",
-      `${endpoint.method} ${endpoint.name}`,
+      this.buildBaseTitle(endpoint),
       vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -53,6 +55,7 @@ export class RequestTabProvider {
     const svgDot = this.generateMethodSvg(endpoint.method);
     panel.iconPath = vscode.Uri.parse(`data:image/svg+xml,${encodeURIComponent(svgDot)}`);
     panel.webview.html = this.getRequestTabHtml(panel);
+    let activeEndpoint = endpoint;
 
     panel.webview.onDidReceiveMessage(async (message: RequestTabMessage) => {
       if (!message || typeof message !== "object" || !("command" in message)) {
@@ -61,10 +64,10 @@ export class RequestTabProvider {
 
       switch (message.command) {
         case "executeRequest":
-          await this.handleExecuteRequest(panel, endpoint, message.request);
+          await this.handleExecuteRequest(panel, activeEndpoint, message.request);
           break;
         case "askAI":
-          await this.handleAskAi(panel, endpoint, message);
+          await this.handleAskAi(panel, activeEndpoint, message);
           break;
         case "saveToCollection":
           // Reserved for future collection mutation support.
@@ -75,11 +78,35 @@ export class RequestTabProvider {
         case "tabReady":
           void panel.webview.postMessage({
             command: "loadEndpoint",
-            endpoint,
+            endpoint: activeEndpoint,
             collection: this.getCollection(),
             environmentVariables: this.getEnvironment()
           });
           break;
+        case "refreshEndpointData": {
+          const refreshed = this.getCollection()?.endpoints.find((item) => item.id === activeEndpoint.id);
+          if (!refreshed) {
+            void panel.webview.postMessage({
+              command: "endpointRefreshUnavailable",
+              endpointId: activeEndpoint.id,
+              error: "This endpoint no longer exists in the active collection."
+            });
+            break;
+          }
+
+          activeEndpoint = refreshed;
+          panel.title = this.buildBaseTitle(activeEndpoint);
+          panel.iconPath = vscode.Uri.parse(
+            `data:image/svg+xml,${encodeURIComponent(this.generateMethodSvg(activeEndpoint.method))}`
+          );
+          void panel.webview.postMessage({
+            command: "loadEndpoint",
+            endpoint: activeEndpoint,
+            collection: this.getCollection(),
+            environmentVariables: this.getEnvironment()
+          });
+          break;
+        }
         default:
           break;
       }
@@ -103,12 +130,45 @@ export class RequestTabProvider {
     this.openTabs.get(endpointId)?.dispose();
   }
 
+  runCurrentTab(): boolean {
+    const panel = this.getActiveTab();
+    if (!panel) {
+      return false;
+    }
+
+    void panel.webview.postMessage({ command: "triggerRunRequest" });
+    return true;
+  }
+
+  notifyCollectionReloaded(): void {
+    for (const panel of this.openTabs.values()) {
+      void panel.webview.postMessage({ command: "collectionReloaded" });
+    }
+  }
+
+  private getActiveTab(): vscode.WebviewPanel | undefined {
+    for (const panel of this.openTabs.values()) {
+      if (panel.active) {
+        return panel;
+      }
+    }
+
+    for (const panel of this.openTabs.values()) {
+      if (panel.visible) {
+        return panel;
+      }
+    }
+
+    return undefined;
+  }
+
   private async handleExecuteRequest(
     panel: vscode.WebviewPanel,
     endpoint: ParsedEndpoint,
     requestInput?: Partial<ExecutableRequest>
   ): Promise<void> {
     const request = this.toExecutableRequest(endpoint, requestInput);
+    panel.title = this.buildBaseTitle(endpoint);
     await panel.webview.postMessage({
       command: "requestStarted",
       requestName: request.name,
@@ -123,6 +183,7 @@ export class RequestTabProvider {
         requestName: request.name,
         endpointId: endpoint.id
       });
+      panel.title = this.buildTitleWithStatus(endpoint, result.status);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await panel.webview.postMessage({
@@ -231,6 +292,14 @@ export class RequestTabProvider {
 
     const color = colorByMethod[method.toUpperCase()] ?? "#6B7280";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="${color}"/></svg>`;
+  }
+
+  private buildBaseTitle(endpoint: ParsedEndpoint): string {
+    return `${endpoint.method} ${endpoint.name}`;
+  }
+
+  private buildTitleWithStatus(endpoint: ParsedEndpoint, status: number): string {
+    return `${this.buildBaseTitle(endpoint)} · ${status}`;
   }
 
   private toExecutableRequest(

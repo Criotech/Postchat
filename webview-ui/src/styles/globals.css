@@ -15,8 +15,20 @@ body,
   height: 100%;
 }
 
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
 * {
   box-sizing: border-box;
+}
+
+code,
+pre,
+textarea,
+.font-mono {
+  font-family: var(--vscode-editor-font-family);
 }
 
 @keyframes postchatEndpointPulse {
@@ -56,4 +68,17 @@ body,
 
 .postchat-fab-pulse {
   animation: postchatFabPulse 1s ease-out;
+}
+
+@keyframes postchatUrlPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(100, 160, 255, 0.7);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(100, 160, 255, 0);
+  }
+}
+
+.postchat-url-pulse {
+  animation: postchatUrlPulse 650ms ease-out;
 }

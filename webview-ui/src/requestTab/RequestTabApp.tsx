@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ParsedCollection, ParsedEndpoint } from "../types/spec";
 import { vscode } from "../vscode";
-import { RequestPanel } from "./components/RequestPanel";
+import { RequestPanel, type PanelTab } from "./components/RequestPanel";
 import { ResponsePanel } from "./components/ResponsePanel";
 import { TabTopBar } from "./components/TabTopBar";
 import type {
@@ -32,6 +32,8 @@ type PendingOAuthRequest = {
   clientSecret: string;
 };
 
+const MIN_PANEL_WIDTH = 300;
+
 const EMPTY_EDIT_STATE: RequestEditState = {
   method: "GET",
   url: "",
@@ -50,13 +52,28 @@ export default function RequestTabApp(): JSX.Element {
   const [environment, setEnvironment] = useState<Record<string, string>>({});
   const [editState, setEditState] = useState<RequestEditState>(EMPTY_EDIT_STATE);
   const [urlTemplate, setUrlTemplate] = useState("");
+  const [originalEditState, setOriginalEditState] = useState<RequestEditState | null>(null);
+  const [originalUrlTemplate, setOriginalUrlTemplate] = useState("");
   const [runResult, setRunResult] = useState<ExecutionResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [activeResponseTab, setActiveResponseTab] = useState<ResponseTab>("body");
+  const [activeRequestTab, setActiveRequestTab] = useState<PanelTab>("params");
   const [pendingOAuthRequest, setPendingOAuthRequest] = useState<PendingOAuthRequest | null>(null);
+  const [showCollectionReloadBanner, setShowCollectionReloadBanner] = useState(false);
+  const [collectionReloadError, setCollectionReloadError] = useState<string | null>(null);
+  const [isRefreshingEndpointData, setIsRefreshingEndpointData] = useState(false);
+  const [flashUrlBar, setFlashUrlBar] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [isResizingSplit, setIsResizingSplit] = useState(false);
+  const [isSplitHandleHovered, setIsSplitHandleHovered] = useState(false);
+  const [isCompactLayout, setIsCompactLayout] = useState(false);
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
+  const flashTimerRef = useRef<number | null>(null);
+  const sendHandlerRef = useRef<() => void>(() => {});
+  const isRunningRef = useRef(false);
 
   useEffect(() => {
     vscode.postMessage({ command: "tabReady" });
@@ -76,19 +93,28 @@ export default function RequestTabApp(): JSX.Element {
           const initial = buildInitialEditState(message.endpoint, nextEnvironment);
           setEditState(initial.state);
           setUrlTemplate(initial.urlTemplate);
+          setOriginalEditState(initial.state);
+          setOriginalUrlTemplate(initial.urlTemplate);
           setRunResult(null);
           setRunError(null);
           setAiResponse(null);
           setIsAiLoading(false);
           setIsRunning(false);
+          isRunningRef.current = false;
+          setActiveRequestTab("params");
           setActiveResponseTab("body");
           setPendingOAuthRequest(null);
+          setShowCollectionReloadBanner(false);
+          setCollectionReloadError(null);
+          setIsRefreshingEndpointData(false);
           break;
         }
         case "requestComplete": {
           setRunResult(message.result);
           setRunError(null);
           setIsRunning(false);
+          isRunningRef.current = false;
+          setIsRefreshingEndpointData(false);
 
           if (pendingOAuthRequest) {
             const accessToken = tryExtractAccessToken(message.result.body);
@@ -103,7 +129,9 @@ export default function RequestTabApp(): JSX.Element {
         case "requestError":
           setRunError(message.error || "Request failed.");
           setIsRunning(false);
+          isRunningRef.current = false;
           setPendingOAuthRequest(null);
+          setIsRefreshingEndpointData(false);
           break;
         case "aiResponse":
         case "askAIResponse":
@@ -122,18 +150,54 @@ export default function RequestTabApp(): JSX.Element {
             setActiveResponseTab("ai");
           }
           break;
+        case "collectionReloaded":
+          setShowCollectionReloadBanner(true);
+          setCollectionReloadError(null);
+          setIsRefreshingEndpointData(false);
+          break;
+        case "flashHighlight":
+          if (flashTimerRef.current !== null) {
+            window.clearTimeout(flashTimerRef.current);
+          }
+          setFlashUrlBar(true);
+          flashTimerRef.current = window.setTimeout(() => {
+            setFlashUrlBar(false);
+            flashTimerRef.current = null;
+          }, 700);
+          break;
+        case "endpointRefreshUnavailable":
+          setCollectionReloadError(message.error || "Could not refresh endpoint data.");
+          setIsRefreshingEndpointData(false);
+          break;
+        case "triggerRunRequest":
+          sendHandlerRef.current();
+          break;
         default:
           break;
       }
     };
 
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      if (flashTimerRef.current !== null) {
+        window.clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = null;
+      }
+      isRunningRef.current = false;
+    };
   }, [pendingOAuthRequest]);
 
   const enabledHeaders = useMemo(() => {
     return editState.headers.filter((header) => header.enabled && header.key.trim());
   }, [editState.headers]);
+
+  const isModified = useMemo(() => {
+    if (!originalEditState) {
+      return false;
+    }
+    return !areEditStatesEqual(editState, originalEditState);
+  }, [editState, originalEditState]);
 
   const buildExecutableRequest = useCallback((): ExecutableRequest | null => {
     if (!endpoint) {
@@ -160,11 +224,16 @@ export default function RequestTabApp(): JSX.Element {
   }, [editState.body, editState.method, editState.url, enabledHeaders, endpoint]);
 
   const handleSend = useCallback(() => {
+    if (isRunningRef.current) {
+      return;
+    }
+
     const request = buildExecutableRequest();
     if (!request) {
       return;
     }
 
+    isRunningRef.current = true;
     setIsRunning(true);
     setRunError(null);
     setActiveResponseTab("body");
@@ -172,10 +241,122 @@ export default function RequestTabApp(): JSX.Element {
   }, [buildExecutableRequest]);
 
   useEffect(() => {
+    sendHandlerRef.current = handleSend;
+  }, [handleSend]);
+
+  const handleResetToOriginal = useCallback(() => {
+    if (!originalEditState) {
+      return;
+    }
+
+    setEditState(originalEditState);
+    setUrlTemplate(originalUrlTemplate);
+    setRunError(null);
+  }, [originalEditState, originalUrlTemplate]);
+
+  const handleRefreshEndpointData = useCallback(() => {
+    setIsRefreshingEndpointData(true);
+    setCollectionReloadError(null);
+    vscode.postMessage({ command: "refreshEndpointData" });
+  }, []);
+
+  const updateSplitRatioFromClientX = useCallback((clientX: number) => {
+    const container = splitContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const bounds = container.getBoundingClientRect();
+    if (bounds.width <= MIN_PANEL_WIDTH * 2) {
+      setSplitRatio(0.5);
+      return;
+    }
+
+    const minRatio = MIN_PANEL_WIDTH / bounds.width;
+    const maxRatio = 1 - minRatio;
+    const nextRatio = (clientX - bounds.left) / bounds.width;
+    setSplitRatio(Math.min(maxRatio, Math.max(minRatio, nextRatio)));
+  }, []);
+
+  useEffect(() => {
+    if (!isResizingSplit) {
+      return;
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      updateSplitRatioFromClientX(event.clientX);
+    };
+    const handleMouseUp = () => {
+      setIsResizingSplit(false);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingSplit, updateSplitRatioFromClientX]);
+
+  useEffect(() => {
+    const updateCompactMode = () => {
+      setIsCompactLayout(window.innerWidth < 900);
+    };
+    updateCompactMode();
+    window.addEventListener("resize", updateCompactMode);
+    return () => window.removeEventListener("resize", updateCompactMode);
+  }, []);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      const key = event.key.toLowerCase();
+      const hasMetaModifier = event.metaKey || event.ctrlKey;
+
+      if (hasMetaModifier && key === "enter") {
         event.preventDefault();
         handleSend();
+        return;
+      }
+
+      if (hasMetaModifier && key === "k") {
+        event.preventDefault();
+        const urlInput = document.getElementById("postchat-request-url-input");
+        if (urlInput instanceof HTMLInputElement) {
+          urlInput.focus();
+          urlInput.select();
+        }
+        return;
+      }
+
+      if (hasMetaModifier && key === "1") {
+        event.preventDefault();
+        setActiveRequestTab("params");
+        return;
+      }
+
+      if (hasMetaModifier && key === "2") {
+        event.preventDefault();
+        setActiveRequestTab("headers");
+        return;
+      }
+
+      if (hasMetaModifier && key === "3") {
+        event.preventDefault();
+        setActiveRequestTab("body");
+        return;
+      }
+
+      if (hasMetaModifier && key === "4") {
+        event.preventDefault();
+        setActiveRequestTab("auth");
+        return;
+      }
+
+      if (key === "escape") {
+        window.dispatchEvent(new CustomEvent("postchat:close-overflow-menus"));
+        setRunResult(null);
+        setRunError(null);
       }
     };
 
@@ -261,6 +442,11 @@ export default function RequestTabApp(): JSX.Element {
       return;
     }
 
+    if (isRunningRef.current) {
+      return;
+    }
+
+    isRunningRef.current = true;
     setIsRunning(true);
     setRunError(null);
     setPendingOAuthRequest({ tokenUrl, clientId, clientSecret });
@@ -357,13 +543,48 @@ export default function RequestTabApp(): JSX.Element {
       <TabTopBar
         editState={editState}
         isRunning={isRunning}
+        isModified={isModified}
+        flashUrlBar={flashUrlBar}
         onMethodChange={handleMethodChange}
         onUrlChange={handleUrlChange}
         onSend={handleSend}
         onAskAI={() => handleAskAi("Help me improve this request before sending it.")}
+        onResetToOriginal={handleResetToOriginal}
         onCopySnippet={handleCopySnippet}
         onSaveToCollection={handleSaveToCollection}
       />
+
+      {showCollectionReloadBanner ? (
+        <div className="border-b border-vscode-panelBorder bg-vscode-editorWidget-background px-3 py-2 text-xs">
+          <p className="text-vscode-editorFg">
+            The collection has been reloaded.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRefreshEndpointData}
+              disabled={isRefreshingEndpointData}
+              className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs text-vscode-buttonFg hover:bg-vscode-buttonHover disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isRefreshingEndpointData ? "Refreshing..." : "Refresh endpoint data"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowCollectionReloadBanner(false);
+                setCollectionReloadError(null);
+                setIsRefreshingEndpointData(false);
+              }}
+              className="rounded bg-vscode-buttonSecondaryBg px-2.5 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+            >
+              Keep current edits
+            </button>
+            {collectionReloadError ? (
+              <span className="text-vscode-errorFg">{collectionReloadError}</span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="border-b border-vscode-panelBorder bg-vscode-card px-3 py-1.5 text-xs text-vscode-muted">
         <span className="font-medium text-vscode-editorFg">{endpoint?.name ?? "No endpoint selected"}</span>
@@ -377,31 +598,69 @@ export default function RequestTabApp(): JSX.Element {
         ) : null}
       </div>
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(340px,1fr)_minmax(420px,1fr)]">
-        <RequestPanel
-          endpoint={endpoint}
-          editState={editState}
-          onPathParamChange={handlePathParamChange}
-          onQueryParamsChange={handleQueryParamsChange}
-          onHeadersChange={handleHeadersChange}
-          onBodyChange={(body) => setEditState((prev) => ({ ...prev, body }))}
-          onContentTypeChange={handleContentTypeChange}
-          onAuthChange={handleAuthChange}
-          onOAuthTokenRequest={handleOAuthTokenRequest}
-        />
+      <main
+        ref={splitContainerRef}
+        className={`flex min-h-0 flex-1 overflow-hidden ${isCompactLayout ? "flex-col" : ""}`}
+      >
+        <div
+          className="min-h-0 min-w-[300px] overflow-hidden"
+          style={
+            isCompactLayout
+              ? undefined
+              : { width: `calc(${(splitRatio * 100).toFixed(2)}% - 2px)` }
+          }
+        >
+          <RequestPanel
+            endpoint={endpoint}
+            editState={editState}
+            activeTab={activeRequestTab}
+            onActiveTabChange={setActiveRequestTab}
+            onPathParamChange={handlePathParamChange}
+            onQueryParamsChange={handleQueryParamsChange}
+            onHeadersChange={handleHeadersChange}
+            onBodyChange={(body) => setEditState((prev) => ({ ...prev, body }))}
+            onContentTypeChange={handleContentTypeChange}
+            onAuthChange={handleAuthChange}
+            onOAuthTokenRequest={handleOAuthTokenRequest}
+          />
+        </div>
 
-        <ResponsePanel
-          editState={editState}
-          runResult={runResult}
-          runError={runError}
-          isRunning={isRunning}
-          activeResponseTab={activeResponseTab}
-          onChangeResponseTab={setActiveResponseTab}
-          aiResponse={aiResponse}
-          isAiLoading={isAiLoading}
-          onAiResponseConsumed={() => setAiResponse(null)}
-          onAskAI={handleAskAi}
-        />
+        {!isCompactLayout ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize request and response panels"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              setIsResizingSplit(true);
+              updateSplitRatioFromClientX(event.clientX);
+            }}
+            onMouseEnter={() => setIsSplitHandleHovered(true)}
+            onMouseLeave={() => setIsSplitHandleHovered(false)}
+            className="w-1 cursor-col-resize"
+            style={{
+              backgroundColor:
+                isSplitHandleHovered || isResizingSplit
+                  ? "var(--vscode-focusBorder)"
+                  : "var(--vscode-sideBar-border, var(--vscode-panel-border))"
+            }}
+          />
+        ) : null}
+
+        <div className="min-h-0 min-w-[300px] flex-1 overflow-hidden">
+          <ResponsePanel
+            editState={editState}
+            runResult={runResult}
+            runError={runError}
+            isRunning={isRunning}
+            activeResponseTab={activeResponseTab}
+            onChangeResponseTab={setActiveResponseTab}
+            aiResponse={aiResponse}
+            isAiLoading={isAiLoading}
+            onAiResponseConsumed={() => setAiResponse(null)}
+            onAskAI={handleAskAi}
+          />
+        </div>
       </main>
     </div>
   );
@@ -569,4 +828,47 @@ function renderSnippet(kind: SnippetKind, request: ExecutableRequest): string {
 
 function escapeSingleQuotes(value: string): string {
   return value.replace(/'/g, "'\\''");
+}
+
+function areEditStatesEqual(a: RequestEditState, b: RequestEditState): boolean {
+  const normalizeRows = (rows: KeyValueRow[]) =>
+    [...rows]
+      .map((row) => ({
+        key: row.key.trim(),
+        value: row.value,
+        enabled: row.enabled
+      }))
+      .sort((left, right) => {
+        const leftKey = `${left.key}:${left.value}:${left.enabled ? "1" : "0"}`;
+        const rightKey = `${right.key}:${right.value}:${right.enabled ? "1" : "0"}`;
+        return leftKey.localeCompare(rightKey);
+      });
+
+  const normalizePathParams = (pathParams: Record<string, string>) =>
+    Object.entries(pathParams)
+      .map(([key, value]) => [key, value] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
+
+  return JSON.stringify({
+    method: a.method,
+    url: a.url,
+    pathParams: normalizePathParams(a.pathParams),
+    queryParams: normalizeRows(a.queryParams),
+    headers: normalizeRows(a.headers),
+    body: a.body,
+    contentType: a.contentType,
+    authType: a.authType,
+    authValue: a.authValue
+  }) ===
+    JSON.stringify({
+      method: b.method,
+      url: b.url,
+      pathParams: normalizePathParams(b.pathParams),
+      queryParams: normalizeRows(b.queryParams),
+      headers: normalizeRows(b.headers),
+      body: b.body,
+      contentType: b.contentType,
+      authType: b.authType,
+      authValue: b.authValue
+    });
 }

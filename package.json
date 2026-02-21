@@ -13,6 +13,8 @@
   "activationEvents": [
     "onCommand:postchat.start",
     "onCommand:postchat.openRequestTab",
+    "onCommand:postchat.runCurrentTab",
+    "onCommand:postchat.closeAllRequestTabs",
     "onView:postchatView"
   ],
   "main": "./out/extension.js",
@@ -25,6 +27,27 @@
       {
         "command": "postchat.openRequestTab",
         "title": "Postchat: Open Request Tab"
+      },
+      {
+        "command": "postchat.runCurrentTab",
+        "title": "Postchat: Run Current Tab"
+      },
+      {
+        "command": "postchat.closeAllRequestTabs",
+        "title": "Postchat: Close All Request Tabs"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "postchat.openRequestTab",
+        "key": "enter",
+        "when": "webviewFocus && activeWebviewViewId == 'postchatView' && !inputFocus"
+      },
+      {
+        "command": "postchat.runCurrentTab",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "webviewFocus && activeWebviewPanelId == 'postchat.requestTab'"
       }
     ],
     "configuration": {

@@ -40,16 +40,38 @@ export function activate(context: vscode.ExtensionContext): void {
   const openRequestTabCommand = vscode.commands.registerCommand(
     "postchat.openRequestTab",
     (endpoint: unknown) => {
-      if (!isParsedEndpoint(endpoint)) {
+      if (isParsedEndpoint(endpoint)) {
+        requestTabProvider.openRequestTab(endpoint);
         return;
       }
-      requestTabProvider.openRequestTab(endpoint);
+
+      if (viewProvider?.openSelectedRequestTab()) {
+        return;
+      }
+
+      void vscode.window.showInformationMessage("Select an endpoint in the Postchat explorer first.");
+    }
+  );
+
+  const runCurrentTabCommand = vscode.commands.registerCommand("postchat.runCurrentTab", () => {
+    if (requestTabProvider.runCurrentTab()) {
+      return;
+    }
+    void vscode.window.showInformationMessage("No active Postchat request tab to run.");
+  });
+
+  const closeAllRequestTabsCommand = vscode.commands.registerCommand(
+    "postchat.closeAllRequestTabs",
+    () => {
+      requestTabProvider.closeAllTabs();
     }
   );
 
   context.subscriptions.push(
     startCommand,
     openRequestTabCommand,
+    runCurrentTabCommand,
+    closeAllRequestTabsCommand,
     { dispose: () => requestTabProvider.closeAllTabs() }
   );
 }

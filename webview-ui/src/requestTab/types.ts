@@ -48,4 +48,8 @@ export type RequestTabIncomingMessage =
   | { command: "aiResponse"; text: string }
   | { command: "askAIResponse"; text: string }
   | { command: "askAIError"; error: string }
-  | { command: "showThinking"; value: boolean };
+  | { command: "showThinking"; value: boolean }
+  | { command: "collectionReloaded" }
+  | { command: "flashHighlight" }
+  | { command: "triggerRunRequest" }
+  | { command: "endpointRefreshUnavailable"; error: string; endpointId: string };

@@ -38,6 +38,7 @@ type IncomingWebviewMessage =
   | { command: "loadCollection" }
   | { command: "loadEnvironment" }
   | { command: "openRequestTab"; endpointId: string }
+  | { command: "setSelectedEndpoint"; endpointId: string | null }
   | { command: "getCollectionData" }
   | { command: "sendMessage"; text?: string }
   | { command: "runRequest"; requestName?: string }
@@ -64,6 +65,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private parsedCollection: ParsedCollection | null = null;
   private resolvedParsedCollection: ParsedCollection | null = null;
   private environmentVariables: Record<string, string> | null = null;
+  private selectedExplorerEndpointId: string | null = null;
   private hasSecretSendApproval = false;
   private pendingConfirmedMessage: string | null = null;
 
@@ -78,6 +80,21 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
   public getResolvedParsedCollection(): ParsedCollection | null {
     return this.resolvedParsedCollection;
+  }
+
+  public openSelectedRequestTab(): boolean {
+    const selectedId = this.selectedExplorerEndpointId?.trim() ?? "";
+    if (!selectedId) {
+      return false;
+    }
+
+    const endpoint = this.resolvedParsedCollection?.endpoints.find((item) => item.id === selectedId);
+    if (!endpoint) {
+      return false;
+    }
+
+    this.requestTabProvider.openRequestTab(endpoint);
+    return true;
   }
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -228,6 +245,12 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "openRequestTab":
         this.handleOpenRequestTab(message.endpointId);
         break;
+      case "setSelectedEndpoint":
+        this.selectedExplorerEndpointId =
+          typeof message.endpointId === "string" && message.endpointId.trim()
+            ? message.endpointId.trim()
+            : null;
+        break;
       case "getCollectionData":
         this.postToWebview({
           command: "collectionData",
@@ -291,6 +314,13 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
         authSchemes: parsed.authSchemes,
         rawSpec: parsed.rawSpec
       });
+      if (
+        this.selectedExplorerEndpointId &&
+        !parsed.endpoints.some((endpoint) => endpoint.id === this.selectedExplorerEndpointId)
+      ) {
+        this.selectedExplorerEndpointId = null;
+      }
+      this.requestTabProvider.notifyCollectionReloaded();
       this.postAssistantMessage(
         `Loaded ${this.getSpecDisplayLabel(this.collectionSpecType)} **${this.collectionName}**.`
       );
@@ -381,6 +411,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     if (!endpointId) {
       return;
     }
+    this.selectedExplorerEndpointId = endpointId;
 
     const endpoint = this.resolvedParsedCollection?.endpoints.find((item) => item.id === endpointId);
     if (!endpoint) {

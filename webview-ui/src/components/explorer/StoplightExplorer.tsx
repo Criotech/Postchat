@@ -302,6 +302,13 @@ export function StoplightExplorer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeMethods, emit, selectedOperation]);
 
+  useEffect(() => {
+    vscode.postMessage({
+      command: "setSelectedEndpoint",
+      endpointId: selectedOperation?.id ?? null
+    });
+  }, [selectedOperation]);
+
   useBridgeListener(
     (event) => {
       switch (event.type) {

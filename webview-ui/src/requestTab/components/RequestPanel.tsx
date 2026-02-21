@@ -6,11 +6,13 @@ import type { ParsedEndpoint } from "../../types/spec";
 import { vscode } from "../../vscode";
 import type { KeyValueRow, RequestEditState } from "../types";
 
-type PanelTab = "params" | "headers" | "body" | "auth" | "description";
+export type PanelTab = "params" | "headers" | "body" | "auth" | "description";
 
 type RequestPanelProps = {
   endpoint: ParsedEndpoint | null;
   editState: RequestEditState;
+  activeTab?: PanelTab;
+  onActiveTabChange?: (tab: PanelTab) => void;
   onPathParamChange: (key: string, value: string) => void;
   onQueryParamsChange: (rows: KeyValueRow[]) => void;
   onHeadersChange: (rows: KeyValueRow[]) => void;
@@ -51,6 +53,8 @@ type OAuth2Config = {
 export function RequestPanel({
   endpoint,
   editState,
+  activeTab: activeTabProp,
+  onActiveTabChange,
   onPathParamChange,
   onQueryParamsChange,
   onHeadersChange,
@@ -59,12 +63,14 @@ export function RequestPanel({
   onAuthChange,
   onOAuthTokenRequest
 }: RequestPanelProps): JSX.Element {
-  const [activeTab, setActiveTab] = useState<PanelTab>("params");
+  const [internalActiveTab, setInternalActiveTab] = useState<PanelTab>("params");
   const [isQueryBulkEdit, setIsQueryBulkEdit] = useState(false);
   const [queryBulkText, setQueryBulkText] = useState("");
   const [bodyValidation, setBodyValidation] = useState<string | null>(null);
   const [isFormRaw, setIsFormRaw] = useState(false);
   const [formRows, setFormRows] = useState<KeyValueRow[]>([]);
+  const activeTab = activeTabProp ?? internalActiveTab;
+  const setActiveTab = onActiveTabChange ?? setInternalActiveTab;
 
   const pathEntries = useMemo(
     () => Object.entries(editState.pathParams),

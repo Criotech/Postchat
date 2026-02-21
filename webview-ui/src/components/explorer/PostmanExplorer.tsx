@@ -3,6 +3,7 @@ import type { ExecutionResult } from "../RequestResult";
 import { useBridgeListener } from "../../hooks/useBridgeListener";
 import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedCollection, ParsedEndpoint } from "../../types/spec";
+import { vscode } from "../../vscode";
 import { CollectionSummary } from "./CollectionSummary";
 import { EndpointSidebar } from "./EndpointSidebar";
 
@@ -70,6 +71,10 @@ export function PostmanExplorer({ collection, onSendToAI: _onSendToAI }: Postman
     setHighlightedEndpointId(null);
     setRecentlyOpened([]);
   }, [collection.title]);
+
+  useEffect(() => {
+    vscode.postMessage({ command: "setSelectedEndpoint", endpointId: selectedEndpointId });
+  }, [selectedEndpointId]);
 
   useEffect(() => {
     return () => {
