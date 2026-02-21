@@ -11,13 +11,13 @@ import type { ExecutableRequest } from "./requestExecutor";
  *   - **Body:** `{"key":"value"}`
  */
 function parseRequestBlock(block: string): ExecutableRequest | null {
-  const titleMatch = block.match(/^###\s+\[(\w+)]\s+(.+)/m);
+  const titleMatch = block.match(/^###\s+(?:\[(\w+)]|(\w+))\s+(.+)/m);
   if (!titleMatch) {
     return null;
   }
 
-  const method = titleMatch[1];
-  const name = titleMatch[2].trim();
+  const method = (titleMatch[1] || titleMatch[2] || "").trim();
+  const name = (titleMatch[3] || "").trim();
 
   const urlMatch = block.match(/\*\*URL:\*\*\s*`([^`]+)`/);
   const url = urlMatch?.[1] ?? "";
@@ -43,7 +43,8 @@ function parseRequestBlock(block: string): ExecutableRequest | null {
   }
 
   let body: string | undefined;
-  const bodyMatch = block.match(/\*\*Body:\*\*\s*(.+)/);
+  const bodyMatch =
+    block.match(/\*\*Request Body:\*\*\s*(.+)/) ?? block.match(/\*\*Body:\*\*\s*(.+)/);
   if (bodyMatch && bodyMatch[1].trim() !== "None") {
     const bodyCodeMatch = bodyMatch[1].match(/`([^`]+)`/);
     if (bodyCodeMatch) {
@@ -55,7 +56,7 @@ function parseRequestBlock(block: string): ExecutableRequest | null {
 }
 
 function splitIntoBlocks(collectionMarkdown: string): string[] {
-  return collectionMarkdown.split(/(?=^### \[)/m).filter((b) => b.trim());
+  return collectionMarkdown.split(/(?=^### (?:\[)?[A-Z]+\]? )/m).filter((b) => b.trim());
 }
 
 export function findRequestByName(

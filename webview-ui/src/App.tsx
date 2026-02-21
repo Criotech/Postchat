@@ -23,7 +23,16 @@ type IncomingMessage =
   | { command: "addMessage"; role: "user" | "assistant"; text: string }
   | { command: "showThinking"; value: boolean }
   | { command: "showError"; text: string }
-  | { command: "collectionLoaded"; name: string; path: string; specType: CollectionSpecType }
+  | {
+      command: "collectionLoaded";
+      name: string;
+      path: string;
+      specType: CollectionSpecType;
+      baseUrl?: string;
+      endpointCount?: number;
+      authSchemes?: Array<{ type: string; name: string; details: Record<string, string> }>;
+      rawSpec?: string;
+    }
   | { command: "environmentLoaded"; name: string }
   | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "showSuggestions"; suggestions: string[] }
