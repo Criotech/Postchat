@@ -639,7 +639,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       .replace(/(src|href)="\.\/(.*?)"/g, (_match, attr, assetPath) => {
         const uri = webview.asWebviewUri(vscode.Uri.joinPath(distUri, assetPath)).toString();
         return `${attr}="${uri}"`;
-      });
+      })
+      .replace(/ crossorigin/g, "");
   }
 
   private getPlaceholderHtml(): string {
