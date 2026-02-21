@@ -10,10 +10,12 @@ type EndpointSidebarProps = {
   onRunRequest: (
     endpoint: ParsedEndpoint
   ) => Promise<ExecutionResult | null> | ExecutionResult | null | void;
+  runResults: Map<string, ExecutionResult>;
+  runErrors: Map<string, string>;
+  highlightedEndpointId: string | null;
 };
 
 type MethodFilter = "ALL" | "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-type RunDotState = { kind: "success" | "error"; fading: boolean };
 
 const METHOD_FILTERS: MethodFilter[] = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"];
 
@@ -26,10 +28,6 @@ const METHOD_BADGE_STYLES: Record<ParsedEndpoint["method"], string> = {
   HEAD: "bg-gray-600/20 text-gray-400 border border-gray-600/30",
   OPTIONS: "bg-gray-600/20 text-gray-400 border border-gray-600/30"
 };
-
-function isPromiseLike<T>(value: unknown): value is Promise<T> {
-  return typeof value === "object" && value !== null && "then" in value;
-}
 
 function groupByFolder(endpoints: ParsedEndpoint[]): Array<[string, ParsedEndpoint[]]> {
   const grouped = new Map<string, ParsedEndpoint[]>();
@@ -51,21 +49,15 @@ export function EndpointSidebar({
   selectedId,
   selectedEndpoint,
   onSelect,
-  onRunRequest
+  onRunRequest,
+  runResults,
+  runErrors,
+  highlightedEndpointId
 }: EndpointSidebarProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMethods, setActiveMethods] = useState<Set<MethodFilter>>(() => new Set(["ALL"]));
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
-  const [runDots, setRunDots] = useState<Record<string, RunDotState>>({});
-  const fadeTimersRef = useRef<Record<string, number>>({});
-  const clearTimersRef = useRef<Record<string, number>>({});
-
-  useEffect(() => {
-    return () => {
-      Object.values(fadeTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
-      Object.values(clearTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
-    };
-  }, []);
+  const rowRefs = useRef<Record<string, HTMLLIElement | null>>({});
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
@@ -100,6 +92,19 @@ export function EndpointSidebar({
     });
   }, [groupedEndpoints]);
 
+  useEffect(() => {
+    if (!highlightedEndpointId) {
+      return;
+    }
+
+    const node = rowRefs.current[highlightedEndpointId];
+    if (!node) {
+      return;
+    }
+
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightedEndpointId]);
+
   const filtersActive = normalizedSearch.length > 0 || !activeMethods.has("ALL");
 
   const handleMethodToggle = useCallback((method: MethodFilter) => {
@@ -132,67 +137,12 @@ export function EndpointSidebar({
     }));
   }, []);
 
-  const markRunDot = useCallback((endpointId: string, kind: "success" | "error") => {
-    if (fadeTimersRef.current[endpointId]) {
-      window.clearTimeout(fadeTimersRef.current[endpointId]);
-    }
-    if (clearTimersRef.current[endpointId]) {
-      window.clearTimeout(clearTimersRef.current[endpointId]);
-    }
-
-    setRunDots((prev) => ({
-      ...prev,
-      [endpointId]: { kind, fading: false }
-    }));
-
-    fadeTimersRef.current[endpointId] = window.setTimeout(() => {
-      setRunDots((prev) => {
-        const current = prev[endpointId];
-        if (!current) {
-          return prev;
-        }
-
-        return {
-          ...prev,
-          [endpointId]: {
-            ...current,
-            fading: true
-          }
-        };
-      });
-    }, 2500);
-
-    clearTimersRef.current[endpointId] = window.setTimeout(() => {
-      setRunDots((prev) => {
-        const next = { ...prev };
-        delete next[endpointId];
-        return next;
-      });
-      delete fadeTimersRef.current[endpointId];
-      delete clearTimersRef.current[endpointId];
-    }, 3000);
-  }, []);
-
   const handleRunClick = useCallback(
-    async (event: MouseEvent, endpoint: ParsedEndpoint) => {
+    (event: MouseEvent, endpoint: ParsedEndpoint) => {
       event.stopPropagation();
-
-      const maybeResult = onRunRequest(endpoint);
-      let result: ExecutionResult | null | undefined;
-
-      if (isPromiseLike<ExecutionResult | null>(maybeResult)) {
-        result = await maybeResult;
-      } else {
-        result = maybeResult;
-      }
-
-      if (!result) {
-        return;
-      }
-
-      markRunDot(endpoint.id, result.status >= 400 ? "error" : "success");
+      void onRunRequest(endpoint);
     },
-    [markRunDot, onRunRequest]
+    [onRunRequest]
   );
 
   const handleKeyDown = useCallback(
@@ -334,14 +284,22 @@ export function EndpointSidebar({
                 <ul className="divide-y divide-vscode-panelBorder">
                   {folderEndpoints.map((endpoint) => {
                     const selected = selectedId === endpoint.id;
-                    const runDot = runDots[endpoint.id];
-                    const dotColor = runDot?.kind === "success" ? "text-green-400" : "text-red-400";
+                    const hasSuccess = runResults.has(endpoint.id);
+                    const hasError = runErrors.has(endpoint.id);
+                    const dotColor = hasError ? "text-red-400" : hasSuccess ? "text-green-400" : "";
+                    const pulsing = highlightedEndpointId === endpoint.id;
 
                     return (
                       <li
                         key={endpoint.id}
+                        ref={(node) => {
+                          rowRefs.current[endpoint.id] = node;
+                        }}
                         onClick={() => onSelect(endpoint)}
-                        className="group relative cursor-pointer px-2 py-1.5"
+                        className={[
+                          "group relative cursor-pointer px-2 py-1.5",
+                          pulsing ? "postchat-endpoint-pulse" : ""
+                        ].join(" ")}
                         style={{
                           background: selected
                             ? "var(--vscode-list-activeSelectionBackground)"
@@ -373,15 +331,11 @@ export function EndpointSidebar({
                             <div className="truncate text-xs text-vscode-descriptionFg">{endpoint.path}</div>
                           </div>
 
-                          {runDot ? (
+                          {hasSuccess || hasError ? (
                             <span
-                              className={[
-                                "text-sm transition-opacity duration-500",
-                                dotColor,
-                                runDot.fading ? "opacity-0" : "opacity-100"
-                              ].join(" ")}
-                              title={runDot.kind === "success" ? "Request succeeded" : "Request failed"}
-                              aria-label={runDot.kind === "success" ? "Request succeeded" : "Request failed"}
+                              className={["text-sm", dotColor].join(" ")}
+                              title={hasError ? "Request failed" : "Request succeeded"}
+                              aria-label={hasError ? "Request failed" : "Request succeeded"}
                             >
                               ●
                             </span>
@@ -389,7 +343,7 @@ export function EndpointSidebar({
 
                           <button
                             type="button"
-                            onClick={(event) => void handleRunClick(event, endpoint)}
+                            onClick={(event) => handleRunClick(event, endpoint)}
                             className="rounded px-1 text-xs opacity-0 transition-opacity group-hover:opacity-100 hover:bg-vscode-buttonBg hover:text-vscode-buttonFg"
                             title="Run endpoint"
                             aria-label={`Run ${endpoint.name}`}

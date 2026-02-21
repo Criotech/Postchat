@@ -1,36 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ExecutionResult } from "../RequestResult";
+import { useBridgeListener } from "../../hooks/useBridgeListener";
+import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedCollection, ParsedEndpoint } from "../../types/spec";
-import { vscode } from "../../vscode";
 import { CollectionSummary } from "./CollectionSummary";
 import { EndpointDetail } from "./EndpointDetail";
 import { EndpointSidebar } from "./EndpointSidebar";
 
 type PostmanExplorerProps = {
   collection: ParsedCollection;
-  onRunRequest: (
-    endpoint: ParsedEndpoint
-  ) => Promise<ExecutionResult | null> | ExecutionResult | null | void;
-  onAskAI: (endpoint: ParsedEndpoint) => void;
   onSendToAI?: (prompt: string) => void;
 };
 
-function isPromiseLike<T>(value: unknown): value is Promise<T> {
-  return typeof value === "object" && value !== null && "then" in value;
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
 }
 
-export function PostmanExplorer({
-  collection,
-  onRunRequest,
-  onAskAI,
-  onSendToAI
-}: PostmanExplorerProps): JSX.Element {
+export function PostmanExplorer({ collection, onSendToAI }: PostmanExplorerProps): JSX.Element {
+  const { emit } = useBridge();
+
   const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [liveResultsByEndpointId, setLiveResultsByEndpointId] = useState<Record<string, ExecutionResult>>({});
+  const [runResults, setRunResults] = useState<Map<string, ExecutionResult>>(() => new Map());
+  const [runErrors, setRunErrors] = useState<Map<string, string>>(() => new Map());
+  const [highlightedEndpointId, setHighlightedEndpointId] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isResizingRef = useRef(false);
+  const highlightTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (collection.endpoints.length === 0) {
@@ -47,8 +53,110 @@ export function PostmanExplorer({
   }, [collection.endpoints]);
 
   useEffect(() => {
-    setLiveResultsByEndpointId({});
+    setRunResults(new Map());
+    setRunErrors(new Map());
+    setHighlightedEndpointId(null);
   }, [collection.title]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
+
+  useBridgeListener(
+    (event) => {
+      switch (event.type) {
+        case "executionComplete": {
+          setRunResults((prev) => {
+            const next = new Map(prev);
+            next.set(event.endpointId, event.result);
+            return next;
+          });
+          setRunErrors((prev) => {
+            if (!prev.has(event.endpointId)) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.delete(event.endpointId);
+            return next;
+          });
+          return;
+        }
+        case "executionError": {
+          setRunErrors((prev) => {
+            const next = new Map(prev);
+            next.set(event.endpointId, event.error);
+            return next;
+          });
+          setRunResults((prev) => {
+            if (!prev.has(event.endpointId)) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.delete(event.endpointId);
+            return next;
+          });
+          return;
+        }
+        case "highlightEndpoint": {
+          const exists = collection.endpoints.some((endpoint) => endpoint.id === event.endpointId);
+          if (!exists) {
+            return;
+          }
+
+          setSelectedEndpointId(event.endpointId);
+          setHighlightedEndpointId(event.endpointId);
+
+          if (highlightTimerRef.current !== null) {
+            window.clearTimeout(highlightTimerRef.current);
+          }
+
+          highlightTimerRef.current = window.setTimeout(() => {
+            setHighlightedEndpointId((current) =>
+              current === event.endpointId ? null : current
+            );
+            highlightTimerRef.current = null;
+          }, 1000);
+          return;
+        }
+        default:
+          return;
+      }
+    },
+    [collection.endpoints]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!selectedEndpointId || isEditableTarget(event.target)) {
+        return;
+      }
+
+      const endpoint = collection.endpoints.find((item) => item.id === selectedEndpointId);
+      if (!endpoint) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "r") {
+        event.preventDefault();
+        emit({ type: "runEndpoint", endpoint });
+        return;
+      }
+
+      if (key === "a") {
+        event.preventDefault();
+        emit({ type: "askAboutEndpoint", endpoint });
+        emit({ type: "switchToChat" });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [collection.endpoints, emit, selectedEndpointId]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -100,34 +208,10 @@ export function PostmanExplorer({
   }, []);
 
   const handleRunEndpoint = useCallback(
-    async (endpoint: ParsedEndpoint): Promise<ExecutionResult | null> => {
-      vscode.postMessage({
-        command: "runEndpoint",
-        endpointId: endpoint.id,
-        endpointName: endpoint.name,
-        method: endpoint.method,
-        url: endpoint.url
-      });
-
-      const maybeResult = onRunRequest(endpoint);
-      let result: ExecutionResult | null | undefined;
-
-      if (isPromiseLike<ExecutionResult | null>(maybeResult)) {
-        result = await maybeResult;
-      } else {
-        result = maybeResult;
-      }
-
-      if (result) {
-        setLiveResultsByEndpointId((prev) => ({
-          ...prev,
-          [endpoint.id]: result
-        }));
-      }
-
-      return result ?? null;
+    (endpoint: ParsedEndpoint) => {
+      emit({ type: "runEndpoint", endpoint });
     },
-    [onRunRequest]
+    [emit]
   );
 
   return (
@@ -150,9 +234,8 @@ export function PostmanExplorer({
                 </div>
                 <EndpointDetail
                   endpoint={selectedEndpoint}
-                  onAskAI={onAskAI}
-                  onRunRequest={handleRunEndpoint}
-                  liveResult={liveResultsByEndpointId[selectedEndpoint.id] ?? null}
+                  liveResult={runResults.get(selectedEndpoint.id) ?? null}
+                  liveError={runErrors.get(selectedEndpoint.id) ?? null}
                   onSendToAI={onSendToAI}
                 />
               </div>
@@ -163,6 +246,9 @@ export function PostmanExplorer({
                 selectedEndpoint={selectedEndpoint}
                 onSelect={handleSelectEndpoint}
                 onRunRequest={handleRunEndpoint}
+                runResults={runResults}
+                runErrors={runErrors}
+                highlightedEndpointId={highlightedEndpointId}
               />
             )}
           </div>
@@ -178,6 +264,9 @@ export function PostmanExplorer({
                 selectedEndpoint={selectedEndpoint}
                 onSelect={handleSelectEndpoint}
                 onRunRequest={handleRunEndpoint}
+                runResults={runResults}
+                runErrors={runErrors}
+                highlightedEndpointId={highlightedEndpointId}
               />
             </div>
 
@@ -193,9 +282,8 @@ export function PostmanExplorer({
             <div className="min-h-0 overflow-hidden">
               <EndpointDetail
                 endpoint={selectedEndpoint}
-                onAskAI={onAskAI}
-                onRunRequest={handleRunEndpoint}
-                liveResult={selectedEndpoint ? liveResultsByEndpointId[selectedEndpoint.id] ?? null : null}
+                liveResult={selectedEndpoint ? runResults.get(selectedEndpoint.id) ?? null : null}
+                liveError={selectedEndpoint ? runErrors.get(selectedEndpoint.id) ?? null : null}
                 onSendToAI={onSendToAI}
               />
             </div>

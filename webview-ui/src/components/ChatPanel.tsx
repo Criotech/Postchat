@@ -6,6 +6,7 @@ import { SecretsWarningModal } from "./SecretsWarningModal";
 import { SettingsPanel } from "./SettingsPanel";
 import { SuggestedPrompts } from "./SuggestedPrompts";
 import type { Message } from "../types";
+import type { ParsedCollection } from "../types/spec";
 
 type SecretFinding = {
   field: string;
@@ -29,6 +30,10 @@ type ChatPanelProps = {
   onRunRequest: (method: string, url: string) => void;
   onSend: (text: string) => void;
   hasCollection: boolean;
+  parsedCollection: ParsedCollection | null;
+  programmaticInput: string | null;
+  programmaticSendRequest: { id: number; text: string } | null;
+  onProgrammaticSendConsumed: () => void;
   isSecretsModalOpen: boolean;
   secretFindings: SecretFinding[];
   onConfirmSend: () => void;
@@ -51,6 +56,10 @@ export function ChatPanel({
   onRunRequest,
   onSend,
   hasCollection,
+  parsedCollection,
+  programmaticInput,
+  programmaticSendRequest,
+  onProgrammaticSendConsumed,
   isSecretsModalOpen,
   secretFindings,
   onConfirmSend,
@@ -82,9 +91,17 @@ export function ChatPanel({
         executionResults={executionResults}
         pendingExecutionName={pendingExecutionName}
         onRunRequest={onRunRequest}
+        parsedCollection={parsedCollection}
       />
 
-      <InputBar onSend={onSend} isThinking={isThinking} hasCollection={hasCollection} />
+      <InputBar
+        onSend={onSend}
+        isThinking={isThinking}
+        hasCollection={hasCollection}
+        programmaticInput={programmaticInput}
+        programmaticSendRequest={programmaticSendRequest}
+        onProgrammaticSendConsumed={onProgrammaticSendConsumed}
+      />
 
       {isSecretsModalOpen ? (
         <SecretsWarningModal

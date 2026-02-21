@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExplorerPanel } from "./components/ExplorerPanel";
 import { Header } from "./components/Header";
 import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
 import type { ConfigValues } from "./components/SettingsPanel";
+import { useBridgeListener } from "./hooks/useBridgeListener";
+import { BridgeProvider, useBridge } from "./lib/explorerBridge";
 import { resolveSlashCommand } from "./lib/slashCommands";
 import type { ParsedCollection, ParsedEndpoint, SpecType } from "./types/spec";
 import { vscode } from "./vscode";
@@ -17,6 +19,11 @@ type SecretFinding = {
 
 type AppTab = "chat" | "explorer";
 type CollectionSpecType = Extract<SpecType, "postman" | "openapi3" | "swagger2">;
+
+type ProgrammaticSendRequest = {
+  id: number;
+  text: string;
+};
 
 type IncomingMessage =
   | { command: "addMessage"; role: "user" | "assistant"; text: string }
@@ -39,8 +46,13 @@ type IncomingMessage =
   | { command: "clearChat" }
   | { command: "providerChanged"; provider: string; model: string }
   | { command: "requestStarted"; requestName: string }
-  | { command: "requestComplete"; result: ExecutionResult; requestName: string }
-  | { command: "requestError"; error: string; requestName: string }
+  | {
+      command: "requestComplete";
+      result: ExecutionResult;
+      requestName: string;
+      endpointId?: string;
+    }
+  | { command: "requestError"; error: string; requestName: string; endpointId?: string }
   | {
       command: "configLoaded";
       provider: string;
@@ -60,7 +72,36 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export default function App(): JSX.Element {
+function buildEndpointQuestion(endpoint: ParsedEndpoint): string {
+  if (endpoint.requiresAuth) {
+    return `How do I authenticate and call the ${endpoint.method} ${endpoint.name} endpoint? Show me a complete code example.`;
+  }
+
+  if (endpoint.requestBody && endpoint.requestBody.trim().length > 0) {
+    return `What is the correct request body format for ${endpoint.method} ${endpoint.name}? Show me an example request in JavaScript fetch and curl.`;
+  }
+
+  return `Explain the ${endpoint.method} ${endpoint.name} endpoint (${endpoint.path}) and how to use it. Provide a code example.`;
+}
+
+function endpointToExecutable(endpoint: ParsedEndpoint): ExecutableRequest {
+  return {
+    name: endpoint.id,
+    method: endpoint.method,
+    url: endpoint.url,
+    headers: endpoint.headers.reduce<Record<string, string>>((acc, header) => {
+      if (header.enabled && header.key.trim().length > 0) {
+        acc[header.key] = header.value;
+      }
+      return acc;
+    }, {}),
+    body: endpoint.requestBody?.trim() ? endpoint.requestBody : undefined
+  };
+}
+
+function AppContent(): JSX.Element {
+  const { emit } = useBridge();
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<AppTab>("chat");
@@ -94,10 +135,15 @@ export default function App(): JSX.Element {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
+
+  const [programmaticInput, setProgrammaticInput] = useState<string | null>(null);
+  const [programmaticSendRequest, setProgrammaticSendRequest] = useState<ProgrammaticSendRequest | null>(null);
+
   const tabToastTimeoutRef = useRef<number | null>(null);
-  const explorerRunResolversRef = useRef<
-    Record<string, { resolve: (result: ExecutionResult | null) => void; timeoutId: number }>
-  >({});
+  const bridgeTimeoutIdsRef = useRef<number[]>([]);
+  const bridgeSendCounterRef = useRef(0);
+  const activeTabRef = useRef<AppTab>("chat");
+  const bridgeRequestEndpointMapRef = useRef<Record<string, string>>({});
 
   // Request execution state
   const [pendingExecution, setPendingExecution] = useState<ExecutableRequest | null>(null);
@@ -108,6 +154,79 @@ export default function App(): JSX.Element {
   const appendMessage = useCallback((role: Message["role"], text: string) => {
     setMessages((prev) => [...prev, { id: createId(), role, text }]);
   }, []);
+
+  const setAppTab = useCallback((tab: AppTab) => {
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+  }, []);
+
+  const clearBridgeTimers = useCallback(() => {
+    for (const timerId of bridgeTimeoutIdsRef.current) {
+      window.clearTimeout(timerId);
+    }
+    bridgeTimeoutIdsRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useBridgeListener(
+    (event) => {
+      switch (event.type) {
+        case "switchToChat":
+          setAppTab("chat");
+          return;
+        case "switchToExplorer":
+          setAppTab("explorer");
+          return;
+        case "askAboutEndpoint": {
+          const question = buildEndpointQuestion(event.endpoint);
+          clearBridgeTimers();
+          setAppTab("chat");
+          setProgrammaticInput(null);
+
+          const fillTimer = window.setTimeout(() => {
+            setProgrammaticInput(question);
+          }, 150);
+
+          const sendTimer = window.setTimeout(() => {
+            bridgeSendCounterRef.current += 1;
+            setProgrammaticSendRequest({ id: bridgeSendCounterRef.current, text: question });
+          }, 300);
+
+          bridgeTimeoutIdsRef.current.push(fillTimer, sendTimer);
+          return;
+        }
+        case "runEndpoint": {
+          const request = endpointToExecutable(event.endpoint);
+          bridgeRequestEndpointMapRef.current[request.name] = event.endpoint.id;
+          setPendingExecution(request);
+          setExecutionResults((prev) => {
+            const next = { ...prev };
+            delete next[request.name];
+            return next;
+          });
+
+          vscode.postMessage({ command: "executeRequest", request });
+          emit({ type: "executionStarted", endpointId: event.endpoint.id });
+          return;
+        }
+        case "highlightEndpoint":
+          if (activeTabRef.current !== "explorer") {
+            setAppTab("explorer");
+            const replayTimer = window.setTimeout(() => {
+              emit({ type: "highlightEndpoint", endpointId: event.endpointId });
+            }, 100);
+            bridgeTimeoutIdsRef.current.push(replayTimer);
+          }
+          return;
+        default:
+          return;
+      }
+    },
+    [clearBridgeTimers, emit, setAppTab]
+  );
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent<IncomingMessage>) => {
@@ -142,6 +261,9 @@ export default function App(): JSX.Element {
           setParsedCollection(null);
           setHasSentFirstMessage(false);
           setError(undefined);
+          setProgrammaticInput(null);
+          setProgrammaticSendRequest(null);
+          bridgeRequestEndpointMapRef.current = {};
           vscode.postMessage({ command: "getCollectionData" });
           break;
         case "collectionData":
@@ -200,10 +322,18 @@ export default function App(): JSX.Element {
           setHasSentFirstMessage(false);
           setPendingExecution(null);
           setExecutionResults({});
+          setProgrammaticInput(null);
+          setProgrammaticSendRequest(null);
+          bridgeRequestEndpointMapRef.current = {};
           break;
         case "requestStarted":
           break;
-        case "requestComplete":
+        case "requestComplete": {
+          const endpointId =
+            message.endpointId ??
+            bridgeRequestEndpointMapRef.current[message.requestName] ??
+            message.requestName;
+
           setPendingExecution((prev) => {
             const request = prev ?? {
               name: message.requestName,
@@ -217,23 +347,24 @@ export default function App(): JSX.Element {
             }));
             return null;
           });
-          if (explorerRunResolversRef.current[message.requestName]) {
-            const pending = explorerRunResolversRef.current[message.requestName];
-            window.clearTimeout(pending.timeoutId);
-            pending.resolve(message.result);
-            delete explorerRunResolversRef.current[message.requestName];
-          }
+
+          emit({ type: "executionComplete", endpointId, result: message.result });
+          delete bridgeRequestEndpointMapRef.current[message.requestName];
           break;
-        case "requestError":
+        }
+        case "requestError": {
+          const endpointId =
+            message.endpointId ??
+            bridgeRequestEndpointMapRef.current[message.requestName] ??
+            message.requestName;
+
           setPendingExecution(null);
-          if (explorerRunResolversRef.current[message.requestName]) {
-            const pending = explorerRunResolversRef.current[message.requestName];
-            window.clearTimeout(pending.timeoutId);
-            pending.resolve(null);
-            delete explorerRunResolversRef.current[message.requestName];
-          }
+          emit({ type: "executionError", endpointId, error: message.error });
+          delete bridgeRequestEndpointMapRef.current[message.requestName];
+
           appendMessage("assistant", `Request **${message.requestName}** failed: ${message.error}`);
           break;
+        }
         default:
           break;
       }
@@ -241,35 +372,30 @@ export default function App(): JSX.Element {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [appendMessage]);
-
-  useEffect(() => {
-    return () => {
-      if (tabToastTimeoutRef.current !== null) {
-        window.clearTimeout(tabToastTimeoutRef.current);
-      }
-
-      for (const requestName of Object.keys(explorerRunResolversRef.current)) {
-        const pending = explorerRunResolversRef.current[requestName];
-        window.clearTimeout(pending.timeoutId);
-        pending.resolve(null);
-        delete explorerRunResolversRef.current[requestName];
-      }
-    };
-  }, []);
+  }, [appendMessage, emit]);
 
   useEffect(() => {
     const handleSwitchTab = (event: Event) => {
       const customEvent = event as CustomEvent<{ tab?: AppTab }>;
       const nextTab = customEvent.detail?.tab;
       if (nextTab === "chat" || nextTab === "explorer") {
-        setActiveTab(nextTab);
+        setAppTab(nextTab);
       }
     };
 
     window.addEventListener("postchat:switchTab", handleSwitchTab as EventListener);
     return () => window.removeEventListener("postchat:switchTab", handleSwitchTab as EventListener);
-  }, []);
+  }, [setAppTab]);
+
+  useEffect(() => {
+    return () => {
+      if (tabToastTimeoutRef.current !== null) {
+        window.clearTimeout(tabToastTimeoutRef.current);
+      }
+      clearBridgeTimers();
+      bridgeRequestEndpointMapRef.current = {};
+    };
+  }, [clearBridgeTimers]);
 
   const handleExecuteRequest = useCallback((request: ExecutableRequest) => {
     setPendingExecution(request);
@@ -291,44 +417,6 @@ export default function App(): JSX.Element {
         headers: {}
       });
       vscode.postMessage({ command: "executeRequestByEndpoint", method, url });
-    },
-    []
-  );
-
-  const handleRunRequestFromExplorer = useCallback(
-    (endpoint: ParsedEndpoint): Promise<ExecutionResult | null> => {
-      const request: ExecutableRequest = {
-        name: endpoint.id,
-        method: endpoint.method,
-        url: endpoint.url,
-        headers: endpoint.headers.reduce<Record<string, string>>((acc, header) => {
-          if (header.enabled && header.key.trim().length > 0) {
-            acc[header.key] = header.value;
-          }
-          return acc;
-        }, {}),
-        body: endpoint.requestBody?.trim() ? endpoint.requestBody : undefined
-      };
-
-      setPendingExecution(request);
-      setExecutionResults((prev) => {
-        const next = { ...prev };
-        delete next[request.name];
-        return next;
-      });
-
-      return new Promise<ExecutionResult | null>((resolve) => {
-        const timeoutId = window.setTimeout(() => {
-          if (!explorerRunResolversRef.current[request.name]) {
-            return;
-          }
-          explorerRunResolversRef.current[request.name].resolve(null);
-          delete explorerRunResolversRef.current[request.name];
-        }, 20000);
-
-        explorerRunResolversRef.current[request.name] = { resolve, timeoutId };
-        vscode.postMessage({ command: "executeRequest", request });
-      });
     },
     []
   );
@@ -404,6 +492,9 @@ export default function App(): JSX.Element {
     setError(undefined);
     setPendingExecution(null);
     setExecutionResults({});
+    setProgrammaticInput(null);
+    setProgrammaticSendRequest(null);
+    bridgeRequestEndpointMapRef.current = {};
     vscode.postMessage({ command: "clearChat" });
   }, []);
 
@@ -430,10 +521,10 @@ export default function App(): JSX.Element {
         return;
       }
 
-      setActiveTab(tab);
+      setAppTab(tab);
       setTabToastMessage(undefined);
     },
-    [collectionName]
+    [collectionName, setAppTab]
   );
 
   const handleConfigChange = useCallback((key: string, value: string) => {
@@ -466,24 +557,17 @@ export default function App(): JSX.Element {
     vscode.postMessage({ command: "cancelSend" });
   }, []);
 
-  const showSuggestions =
-    !hasSentFirstMessage && messages.filter((msg) => msg.role === "user").length === 0;
-
-  const handleAskAiForEndpoint = useCallback(
-    (endpoint: ParsedEndpoint) => {
-      const prompt = `Help me understand this endpoint and how to call it safely:\n${endpoint.method} ${endpoint.url}\nEndpoint name: ${endpoint.name}\nDescribe required auth, required parameters, and provide one working request example.`;
-      setActiveTab("chat");
-      handleSend(prompt);
-    },
-    [handleSend]
-  );
-
   const handleSendToAiFromResponse = useCallback(
     (prompt: string) => {
-      setActiveTab("chat");
+      setAppTab("chat");
       handleSend(prompt);
     },
-    [handleSend]
+    [handleSend, setAppTab]
+  );
+
+  const showSuggestions = useMemo(
+    () => !hasSentFirstMessage && messages.filter((msg) => msg.role === "user").length === 0,
+    [hasSentFirstMessage, messages]
   );
 
   return (
@@ -522,6 +606,10 @@ export default function App(): JSX.Element {
             onRunRequest={handleRunRequestFromBubble}
             onSend={handleSend}
             hasCollection={Boolean(collectionName)}
+            parsedCollection={parsedCollection}
+            programmaticInput={programmaticInput}
+            programmaticSendRequest={programmaticSendRequest}
+            onProgrammaticSendConsumed={() => setProgrammaticSendRequest(null)}
             isSecretsModalOpen={isSecretsModalOpen}
             secretFindings={secretFindings}
             onConfirmSend={handleConfirmSend}
@@ -534,12 +622,18 @@ export default function App(): JSX.Element {
             parsedCollection={parsedCollection}
             rawSpec={rawSpec}
             specType={specType}
-            onRunRequest={handleRunRequestFromExplorer}
-            onAskAI={handleAskAiForEndpoint}
             onSendToAI={handleSendToAiFromResponse}
           />
         ) : null}
       </main>
     </div>
+  );
+}
+
+export default function App(): JSX.Element {
+  return (
+    <BridgeProvider>
+      <AppContent />
+    </BridgeProvider>
   );
 }

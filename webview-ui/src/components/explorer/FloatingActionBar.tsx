@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedEndpoint } from "../../types/spec";
 import type { ExecutionResult } from "../RequestResult";
 import { ResponseViewer } from "./ResponseViewer";
@@ -6,8 +7,7 @@ import { ResponseViewer } from "./ResponseViewer";
 type FloatingActionBarProps = {
   endpoint: ParsedEndpoint;
   runResult: ExecutionResult | null;
-  onRunRequest: () => void | Promise<void>;
-  onAskAI: () => void;
+  runError: string | null;
   onClearResult: () => void;
 };
 
@@ -37,10 +37,10 @@ function getStatusBadge(status: number): string {
 export function FloatingActionBar({
   endpoint,
   runResult,
-  onRunRequest,
-  onAskAI,
+  runError,
   onClearResult
 }: FloatingActionBarProps): JSX.Element {
+  const { emit } = useBridge();
   const [showFullResponse, setShowFullResponse] = useState(false);
 
   useEffect(() => {
@@ -75,14 +75,17 @@ export function FloatingActionBar({
             <>
               <button
                 type="button"
-                onClick={() => void onRunRequest()}
+                onClick={() => emit({ type: "runEndpoint", endpoint })}
                 className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
               >
                 ▶ Run
               </button>
               <button
                 type="button"
-                onClick={onAskAI}
+                onClick={() => {
+                  emit({ type: "askAboutEndpoint", endpoint });
+                  emit({ type: "switchToChat" });
+                }}
                 className="rounded bg-vscode-buttonSecondaryBg px-2.5 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
               >
                 💬 Ask AI
@@ -103,7 +106,10 @@ export function FloatingActionBar({
               </button>
               <button
                 type="button"
-                onClick={onAskAI}
+                onClick={() => {
+                  emit({ type: "askAboutEndpoint", endpoint });
+                  emit({ type: "switchToChat" });
+                }}
                 className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
               >
                 Ask AI
@@ -120,6 +126,14 @@ export function FloatingActionBar({
           )}
         </div>
       </div>
+
+      <div className="px-3 pb-2 text-[10px] text-vscode-descriptionFg">R to run · A to ask AI</div>
+
+      {runError ? (
+        <div className="border-t border-vscode-panelBorder px-3 py-2 text-xs text-vscode-errorFg">
+          Request failed: {runError}
+        </div>
+      ) : null}
     </div>
   );
 }

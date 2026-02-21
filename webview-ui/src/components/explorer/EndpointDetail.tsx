@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExecutionResult } from "../RequestResult";
+import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedEndpoint } from "../../types/spec";
 import { ResponseViewer } from "./ResponseViewer";
 
 type EndpointDetailProps = {
   endpoint: ParsedEndpoint | null;
-  onAskAI: (endpoint: ParsedEndpoint) => void;
-  onRunRequest: (
-    endpoint: ParsedEndpoint
-  ) => Promise<ExecutionResult | null> | ExecutionResult | null | void;
   liveResult?: ExecutionResult | null;
+  liveError?: string | null;
   onSendToAI?: (prompt: string) => void;
 };
 
@@ -128,23 +126,19 @@ function SectionHeader({
   );
 }
 
-function isPromiseLike<T>(value: unknown): value is Promise<T> {
-  return typeof value === "object" && value !== null && "then" in value;
-}
-
 export function EndpointDetail({
   endpoint,
-  onAskAI,
-  onRunRequest,
   liveResult,
+  liveError,
   onSendToAI
 }: EndpointDetailProps): JSX.Element {
+  const { emit } = useBridge();
+
   const [urlTemplate, setUrlTemplate] = useState("");
   const [pathParamValues, setPathParamValues] = useState<Record<string, string>>({});
   const [activePathParam, setActivePathParam] = useState<string | null>(null);
   const [headers, setHeaders] = useState<EditableHeader[]>([]);
   const [bodyText, setBodyText] = useState("");
-  const [localLiveResult, setLocalLiveResult] = useState<ExecutionResult | null>(null);
   const [sectionsOpen, setSectionsOpen] = useState<Record<DetailSection, boolean>>({
     params: true,
     headers: true,
@@ -153,7 +147,7 @@ export function EndpointDetail({
   });
   const [expandedResponses, setExpandedResponses] = useState<Record<string, boolean>>({});
 
-  const effectiveLiveResult = liveResult ?? localLiveResult;
+  const effectiveLiveResult = liveResult ?? null;
 
   useEffect(() => {
     if (!endpoint) {
@@ -162,7 +156,6 @@ export function EndpointDetail({
       setActivePathParam(null);
       setHeaders([]);
       setBodyText("");
-      setLocalLiveResult(null);
       setExpandedResponses({});
       return;
     }
@@ -187,7 +180,6 @@ export function EndpointDetail({
       }))
     );
     setBodyText(endpoint.requestBody ?? "");
-    setLocalLiveResult(null);
     setExpandedResponses({});
   }, [endpoint]);
 
@@ -223,7 +215,7 @@ export function EndpointDetail({
 
   const bodyModified = endpoint ? bodyText !== (endpoint.requestBody ?? "") : false;
 
-  const effectiveEndpoint = useMemo<ParsedEndpoint | null>(() => {
+  const editedEndpoint = useMemo<ParsedEndpoint | null>(() => {
     if (!endpoint) {
       return null;
     }
@@ -247,33 +239,22 @@ export function EndpointDetail({
     }));
   }, []);
 
-  const handleRun = useCallback(async () => {
-    if (!effectiveEndpoint) {
+  const handleRun = useCallback(() => {
+    if (!editedEndpoint) {
       return;
     }
 
-    const maybeResult = onRunRequest(effectiveEndpoint);
-
-    if (isPromiseLike<ExecutionResult | null>(maybeResult)) {
-      const result = await maybeResult;
-      if (result) {
-        setLocalLiveResult(result);
-      }
-      return;
-    }
-
-    if (maybeResult) {
-      setLocalLiveResult(maybeResult);
-    }
-  }, [effectiveEndpoint, onRunRequest]);
+    emit({ type: "runEndpoint", endpoint: editedEndpoint });
+  }, [editedEndpoint, emit]);
 
   const handleAskAI = useCallback(() => {
-    if (!effectiveEndpoint) {
+    if (!endpoint) {
       return;
     }
 
-    onAskAI(effectiveEndpoint);
-  }, [effectiveEndpoint, onAskAI]);
+    emit({ type: "askAboutEndpoint", endpoint });
+    emit({ type: "switchToChat" });
+  }, [emit, endpoint]);
 
   if (!endpoint) {
     return (
@@ -301,7 +282,7 @@ export function EndpointDetail({
           ) : null}
           <button
             type="button"
-            onClick={() => void handleRun()}
+            onClick={handleRun}
             className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
           >
             ▶ Run Request
@@ -314,6 +295,8 @@ export function EndpointDetail({
             💬 Ask AI
           </button>
         </div>
+
+        <p className="mt-1 text-[10px] text-vscode-descriptionFg">R to run · A to ask AI</p>
 
         <div className="mt-3 rounded border border-vscode-panelBorder bg-vscode-inputBg px-2 py-2">
           <input
@@ -607,6 +590,12 @@ export function EndpointDetail({
 
         {sectionsOpen.responses ? (
           <div className="space-y-3 p-3">
+            {liveError ? (
+              <div className="rounded border border-vscode-errorBorder bg-vscode-errorBg px-3 py-2 text-xs text-vscode-errorFg">
+                Request failed: {liveError}
+              </div>
+            ) : null}
+
             {effectiveLiveResult ? (
               <div>
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-vscode-descriptionFg">

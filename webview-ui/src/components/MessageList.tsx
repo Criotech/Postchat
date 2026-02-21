@@ -4,6 +4,7 @@ import { MessageBubble } from "./MessageBubble";
 import { RequestResult } from "./RequestResult";
 import type { ExecutableRequest, ExecutionResult } from "./RequestResult";
 import { ThinkingBubble } from "./ThinkingBubble";
+import type { ParsedCollection } from "../types/spec";
 
 type MessageListProps = {
   messages: Message[];
@@ -11,6 +12,7 @@ type MessageListProps = {
   executionResults: Record<string, { request: ExecutableRequest; result: ExecutionResult }>;
   pendingExecutionName: string | null;
   onRunRequest?: (method: string, url: string) => void;
+  parsedCollection: ParsedCollection | null;
 };
 
 export function MessageList({
@@ -18,7 +20,8 @@ export function MessageList({
   isThinking,
   executionResults,
   pendingExecutionName,
-  onRunRequest
+  onRunRequest,
+  parsedCollection
 }: MessageListProps): JSX.Element {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -30,7 +33,12 @@ export function MessageList({
     <main className="flex-1 overflow-y-auto px-3 py-3">
       <div className="flex flex-col gap-3">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} onRunRequest={onRunRequest} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            onRunRequest={onRunRequest}
+            parsedCollection={parsedCollection}
+          />
         ))}
 
         {pendingExecutionName ? (

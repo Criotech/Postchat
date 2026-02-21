@@ -3,6 +3,8 @@ import "@stoplight/elements/styles.min.css";
 import yaml from "js-yaml";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ExecutionResult } from "../RequestResult";
+import { useBridgeListener } from "../../hooks/useBridgeListener";
+import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedCollection, ParsedEndpoint, SpecType } from "../../types/spec";
 import { FloatingActionBar } from "./FloatingActionBar";
 
@@ -10,17 +12,15 @@ type StoplightExplorerProps = {
   rawSpec: string;
   specType: Extract<SpecType, "openapi3" | "swagger2">;
   parsedCollection: ParsedCollection;
-  onRunRequest: (
-    endpoint: ParsedEndpoint
-  ) => Promise<ExecutionResult | null> | ExecutionResult | null | void;
-  onAskAI: (endpoint: ParsedEndpoint) => void;
+};
+
+type RunState = {
+  endpointId: string;
+  result: ExecutionResult | null;
+  error: string | null;
 };
 
 const METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
-
-function isPromiseLike<T>(value: unknown): value is Promise<T> {
-  return typeof value === "object" && value !== null && "then" in value;
-}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -31,17 +31,34 @@ function decodeStoplightPath(encodedPath: string): string {
   return decoded.startsWith("/") ? decoded : `/${decoded}`;
 }
 
+function encodeStoplightPath(path: string): string {
+  const tokenized = path.replace(/~/g, "~0").replace(/\//g, "~1");
+  return encodeURIComponent(tokenized);
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
 export function StoplightExplorer({
   rawSpec,
   specType,
-  parsedCollection,
-  onRunRequest,
-  onAskAI
+  parsedCollection
 }: StoplightExplorerProps): JSX.Element {
+  const { emit } = useBridge();
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
   const [selectedOperation, setSelectedOperation] = useState<ParsedEndpoint | null>(null);
-  const [runResult, setRunResult] = useState<ExecutionResult | null>(null);
+  const [runState, setRunState] = useState<RunState | null>(null);
 
   const parsedSpec = useMemo<Record<string, unknown> | null>(() => {
     const trimmed = rawSpec.trim();
@@ -61,6 +78,14 @@ export function StoplightExplorer({
       }
     }
   }, [rawSpec]);
+
+  const endpointById = useMemo(() => {
+    const lookup = new Map<string, ParsedEndpoint>();
+    for (const endpoint of parsedCollection.endpoints) {
+      lookup.set(endpoint.id, endpoint);
+    }
+    return lookup;
+  }, [parsedCollection.endpoints]);
 
   const operationLookup = useMemo(() => {
     const lookup = new Map<string, { path: string; method: ParsedEndpoint["method"] }>();
@@ -155,32 +180,59 @@ export function StoplightExplorer({
   }, [handleHashChange]);
 
   useEffect(() => {
-    setRunResult(null);
-  }, [selectedOperationId]);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!selectedOperation || isEditableTarget(event.target)) {
+        return;
+      }
 
-  const handleRun = useCallback(async () => {
-    if (!selectedOperation) {
-      return;
-    }
+      const key = event.key.toLowerCase();
+      if (key === "r") {
+        event.preventDefault();
+        emit({ type: "runEndpoint", endpoint: selectedOperation });
+        return;
+      }
 
-    const maybeResult = onRunRequest(selectedOperation);
+      if (key === "a") {
+        event.preventDefault();
+        emit({ type: "askAboutEndpoint", endpoint: selectedOperation });
+        emit({ type: "switchToChat" });
+      }
+    };
 
-    if (isPromiseLike<ExecutionResult | null>(maybeResult)) {
-      const result = await maybeResult;
-      setRunResult(result ?? null);
-      return;
-    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [emit, selectedOperation]);
 
-    setRunResult(maybeResult ?? null);
-  }, [onRunRequest, selectedOperation]);
+  useBridgeListener(
+    (event) => {
+      switch (event.type) {
+        case "executionComplete":
+          setRunState({ endpointId: event.endpointId, result: event.result, error: null });
+          return;
+        case "executionError":
+          setRunState({ endpointId: event.endpointId, result: null, error: event.error });
+          return;
+        case "highlightEndpoint": {
+          const target = endpointById.get(event.endpointId);
+          if (!target) {
+            return;
+          }
 
-  const handleAskAI = useCallback(() => {
-    if (!selectedOperation) {
-      return;
-    }
+          const encodedPath = encodeStoplightPath(target.path);
+          window.location.hash = `#/paths/${encodedPath}/${target.method.toLowerCase()}`;
+          return;
+        }
+        default:
+          return;
+      }
+    },
+    [endpointById]
+  );
 
-    onAskAI(selectedOperation);
-  }, [onAskAI, selectedOperation]);
+  const currentRunResult =
+    selectedOperation && runState?.endpointId === selectedOperation.id ? runState.result : null;
+  const currentRunError =
+    selectedOperation && runState?.endpointId === selectedOperation.id ? runState.error : null;
 
   if (!parsedSpec) {
     return (
@@ -194,6 +246,7 @@ export function StoplightExplorer({
     <div className="relative flex h-full flex-col">
       <div ref={containerRef} className="postchat-stoplight-wrapper flex-1 overflow-auto pb-24">
         <API
+          key={specType}
           apiDescriptionDocument={parsedSpec}
           router="hash"
           layout="sidebar"
@@ -205,10 +258,9 @@ export function StoplightExplorer({
       {selectedOperation ? (
         <FloatingActionBar
           endpoint={selectedOperation}
-          runResult={runResult}
-          onRunRequest={handleRun}
-          onAskAI={handleAskAI}
-          onClearResult={() => setRunResult(null)}
+          runResult={currentRunResult}
+          runError={currentRunError}
+          onClearResult={() => setRunState(null)}
         />
       ) : null}
     </div>
