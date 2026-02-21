@@ -1,7 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ExternalLink, Plus } from "lucide-react";
+import {
+  AlignJustify,
+  Braces,
+  Check,
+  ExternalLink,
+  Key,
+  Lock,
+  Plus,
+  Shield,
+  Table2,
+  Trash2,
+  X
+} from "lucide-react";
 import type { ParsedEndpoint } from "../../types/spec";
 import { vscode } from "../../vscode";
 import type { KeyValueRow, RequestEditState } from "../types";
@@ -125,12 +137,6 @@ export function RequestPanel({
     onQueryParamsChange(next);
   };
 
-  const updateHeaderRow = (index: number, updates: Partial<KeyValueRow>) => {
-    const next = [...editState.headers];
-    next[index] = { ...next[index], ...updates };
-    onHeadersChange(next);
-  };
-
   const addHeaderPreset = (preset: "json" | "auth") => {
     if (preset === "json") {
       const next = upsertOrAppendHeader(editState.headers, "Content-Type", "application/json");
@@ -158,133 +164,172 @@ export function RequestPanel({
   const oauthConfig = parseOAuth2Config(editState.authValue);
 
   return (
-    <section className="flex h-full min-h-0 flex-col border-r border-vscode-panelBorder bg-vscode-editorBg">
-      <nav className="flex border-b border-vscode-panelBorder px-2 pt-2 text-xs">
+    <section className="flex h-full min-h-0 flex-col border-r border-vscode-panelBorder">
+      {/* Tab navigation */}
+      <nav className="flex border-b border-vscode-panelBorder text-[12px]">
         <PanelTabButton label="Params" count={paramCount} active={activeTab === "params"} onClick={() => setActiveTab("params")} />
         <PanelTabButton label="Headers" count={headerCount} active={activeTab === "headers"} onClick={() => setActiveTab("headers")} />
         <PanelTabButton label="Body" count={bodyCount} active={activeTab === "body"} onClick={() => setActiveTab("body")} />
         <PanelTabButton label="Auth" count={authCount} active={activeTab === "auth"} onClick={() => setActiveTab("auth")} />
         <PanelTabButton
-          label="Description"
+          label="Docs"
           count={descriptionCount}
           active={activeTab === "description"}
           onClick={() => setActiveTab("description")}
         />
       </nav>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      {/* Tab content */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {activeTab === "params" ? (
-          <div className="space-y-4">
-            <section>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-vscode-muted">Path Parameters</h3>
-              {pathEntries.length === 0 ? (
-                <p className="rounded border border-vscode-panelBorder bg-vscode-card p-2 text-xs text-vscode-muted">
-                  No path parameters detected.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {pathEntries.map(([key, value]) => (
-                    <div key={key} className="grid grid-cols-[minmax(120px,180px)_1fr_auto] items-center gap-2">
-                      <div className="rounded border border-vscode-panelBorder bg-vscode-card px-2 py-1 text-xs font-medium">
-                        {key}
-                      </div>
-                      <input
-                        value={value}
-                        onChange={(event) => onPathParamChange(key, event.target.value)}
-                        className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1.5 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                      />
-                      <span className="rounded bg-vscode-badgeBg px-1.5 py-0.5 text-[10px] text-vscode-badgeFg">Required</span>
-                    </div>
-                  ))}
+          <div>
+            {/* Path Parameters */}
+            {pathEntries.length > 0 ? (
+              <div className="border-b border-vscode-panelBorder">
+                <SectionHeader title="Path Parameters" />
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <TableHeaderRow columns={["", "Key", "Value", ""]} />
+                    </thead>
+                    <tbody>
+                      {pathEntries.map(([key, value]) => (
+                        <tr key={key} className="group border-b border-vscode-panelBorder last:border-b-0">
+                          <td className="w-8 px-2 py-1.5 text-center">
+                            <Lock size={11} className="text-vscode-descriptionFg" />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span className="font-mono text-xs font-medium text-vscode-editorFg">{key}</span>
+                            <span className="ml-1.5 rounded bg-orange-500/15 px-1 py-[1px] text-[9px] font-semibold text-orange-400">
+                              required
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              value={value}
+                              onChange={(event) => onPathParamChange(key, event.target.value)}
+                              placeholder="Enter value"
+                              className="w-full rounded border border-transparent bg-transparent px-2 py-1 font-mono text-xs text-vscode-inputFg hover:border-vscode-inputBorder focus:border-vscode-focusBorder focus:bg-vscode-inputBg focus:outline-none"
+                            />
+                          </td>
+                          <td className="w-8" />
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              )}
-            </section>
+              </div>
+            ) : null}
 
-            <section>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-vscode-muted">Query Parameters</h3>
+            {/* Query Parameters */}
+            <div>
+              <div className="flex items-center justify-between border-b border-vscode-panelBorder px-3 py-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-vscode-descriptionFg">
+                  Query Params
+                </span>
                 <button
                   type="button"
                   onClick={() => setIsQueryBulkEdit((prev) => !prev)}
-                  className="rounded border border-vscode-panelBorder px-2 py-1 text-[11px] hover:bg-vscode-listHover"
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
                 >
-                  {isQueryBulkEdit ? "Table view" : "Bulk edit"}
+                  {isQueryBulkEdit ? <Table2 size={11} /> : <AlignJustify size={11} />}
+                  {isQueryBulkEdit ? "Table" : "Bulk Edit"}
                 </button>
               </div>
 
               {isQueryBulkEdit ? (
-                <textarea
-                  value={queryBulkText}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    setQueryBulkText(nextValue);
-                    applyQueryBulkText(nextValue);
-                  }}
-                  className="h-28 w-full rounded border border-vscode-inputBorder bg-vscode-inputBg p-2 font-mono text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  placeholder="page=1&limit=20"
-                />
+                <div className="p-3">
+                  <textarea
+                    value={queryBulkText}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setQueryBulkText(nextValue);
+                      applyQueryBulkText(nextValue);
+                    }}
+                    className="h-28 w-full rounded-md border border-vscode-inputBorder bg-vscode-inputBg p-2 font-mono text-xs focus:border-vscode-focusBorder focus:outline-none"
+                    placeholder="page=1&limit=20"
+                  />
+                </div>
               ) : (
-                <div className="space-y-2">
-                  {editState.queryParams.map((row, index) => (
-                    <KeyValueRowEditor
-                      key={`query-${index}`}
-                      row={row}
-                      onChange={(updates) => updateQueryRow(index, updates)}
-                      onDelete={() => {
-                        const next = editState.queryParams.filter((_candidate, rowIndex) => rowIndex !== index);
-                        onQueryParamsChange(next);
-                      }}
-                    />
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => onQueryParamsChange([...editState.queryParams, { key: "", value: "", enabled: true }])}
-                    className="inline-flex items-center gap-1 rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                  >
-                    <Plus size={12} />
-                    Add param
-                  </button>
+                <div>
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <TableHeaderRow columns={["", "Key", "Value", ""]} />
+                    </thead>
+                    <tbody>
+                      {editState.queryParams.map((row, index) => (
+                        <KVTableRow
+                          key={`query-${index}`}
+                          row={row}
+                          onChange={(updates) => updateQueryRow(index, updates)}
+                          onDelete={() => {
+                            const next = editState.queryParams.filter((_candidate, rowIndex) => rowIndex !== index);
+                            onQueryParamsChange(next);
+                          }}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => onQueryParamsChange([...editState.queryParams, { key: "", value: "", enabled: true }])}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                    >
+                      <Plus size={12} />
+                      Add parameter
+                    </button>
+                  </div>
                 </div>
               )}
-            </section>
+            </div>
           </div>
         ) : null}
 
         {activeTab === "headers" ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
+          <div>
+            <div className="flex items-center gap-1.5 border-b border-vscode-panelBorder px-3 py-1.5">
               <button
                 type="button"
                 onClick={() => addHeaderPreset("json")}
-                className="rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
               >
-                Add JSON headers
+                <Braces size={11} />
+                JSON
               </button>
               <button
                 type="button"
                 onClick={() => addHeaderPreset("auth")}
-                className="rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
               >
-                Add Auth header
+                <Key size={11} />
+                Auth
               </button>
             </div>
 
-            {editState.headers.map((row, index) => (
-              <KeyValueRowEditor
-                key={`header-${index}`}
-                row={row}
-                datalistId="postchat-header-suggestions"
-                onChange={(updates) => {
-                  const next = [...editState.headers];
-                  next[index] = { ...next[index], ...updates };
-                  onHeadersChange(next);
-                }}
-                onDelete={() => {
-                  const next = editState.headers.filter((_candidate, rowIndex) => rowIndex !== index);
-                  onHeadersChange(next);
-                }}
-              />
-            ))}
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <TableHeaderRow columns={["", "Key", "Value", ""]} />
+              </thead>
+              <tbody>
+                {editState.headers.map((row, index) => (
+                  <KVTableRow
+                    key={`header-${index}`}
+                    row={row}
+                    datalistId="postchat-header-suggestions"
+                    onChange={(updates) => {
+                      const next = [...editState.headers];
+                      next[index] = { ...next[index], ...updates };
+                      onHeadersChange(next);
+                    }}
+                    onDelete={() => {
+                      const next = editState.headers.filter((_candidate, rowIndex) => rowIndex !== index);
+                      onHeadersChange(next);
+                    }}
+                  />
+                ))}
+              </tbody>
+            </table>
 
             <datalist id="postchat-header-suggestions">
               {COMMON_HEADERS.map((header) => (
@@ -292,71 +337,85 @@ export function RequestPanel({
               ))}
             </datalist>
 
-            <button
-              type="button"
-              onClick={() => onHeadersChange([...editState.headers, { key: "", value: "", enabled: true }])}
-              className="inline-flex items-center gap-1 rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-            >
-              <Plus size={12} />
-              Add header
-            </button>
+            <div className="px-3 py-2">
+              <button
+                type="button"
+                onClick={() => onHeadersChange([...editState.headers, { key: "", value: "", enabled: true }])}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+              >
+                <Plus size={12} />
+                Add header
+              </button>
+            </div>
           </div>
         ) : null}
 
         {activeTab === "body" ? (
-          <div className="space-y-3">
+          <div>
             {!canHaveBody ? (
-              <p className="rounded border border-vscode-panelBorder bg-vscode-card p-2 text-xs text-vscode-muted">
-                {editState.method.toUpperCase()} requests do not have a body.
-              </p>
+              <div className="p-4 text-center">
+                <p className="text-xs text-vscode-descriptionFg">
+                  {editState.method.toUpperCase()} requests do not have a body.
+                </p>
+              </div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-vscode-muted">Content type</label>
-                  <select
-                    value={editState.contentType}
-                    onChange={(event) => onContentTypeChange(event.target.value)}
-                    className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  >
-                    <option value="none">None</option>
-                    <option value="json">JSON</option>
-                    <option value="form-data">Form Data</option>
-                    <option value="urlencoded">URL Encoded</option>
-                    <option value="raw">Raw Text</option>
-                    <option value="binary">Binary</option>
-                  </select>
+                {/* Content type selector as pill bar */}
+                <div className="flex items-center gap-1 border-b border-vscode-panelBorder px-3 py-2">
+                  {[
+                    { value: "none", label: "None" },
+                    { value: "json", label: "JSON" },
+                    { value: "form-data", label: "Form Data" },
+                    { value: "urlencoded", label: "x-www-form" },
+                    { value: "raw", label: "Raw" },
+                    { value: "binary", label: "Binary" }
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => onContentTypeChange(option.value)}
+                      className={[
+                        "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                        editState.contentType === option.value
+                          ? "bg-vscode-buttonBg text-vscode-buttonFg"
+                          : "text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                      ].join(" ")}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
 
                 {editState.contentType === "json" ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
+                  <div>
+                    <div className="flex items-center gap-1 border-b border-vscode-panelBorder px-3 py-1.5">
                       <button
                         type="button"
                         onClick={() => {
                           try {
                             const parsed = JSON.parse(editState.body || "{}");
                             onBodyChange(JSON.stringify(parsed, null, 2));
-                            setBodyValidation("JSON formatted.");
+                            setBodyValidation("Formatted");
                           } catch {
-                            setBodyValidation("Unable to format invalid JSON.");
+                            setBodyValidation("Invalid JSON");
                           }
                         }}
-                        className="rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
+                        className="rounded-md px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
                       >
-                        Format JSON
+                        Beautify
                       </button>
                       <button
                         type="button"
                         onClick={() => {
                           try {
                             JSON.parse(editState.body || "{}");
-                            setBodyValidation("Valid JSON ✓");
+                            setBodyValidation("Valid JSON");
                           } catch (error) {
                             const message = error instanceof Error ? error.message : String(error);
-                            setBodyValidation(`Invalid JSON: ${message}`);
+                            setBodyValidation(`Invalid: ${message}`);
                           }
                         }}
-                        className="rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
+                        className="rounded-md px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
                       >
                         Validate
                       </button>
@@ -366,87 +425,121 @@ export function RequestPanel({
                           const generated = generateExampleFromSchema(editState.body);
                           if (generated) {
                             onBodyChange(JSON.stringify(generated, null, 2));
-                            setBodyValidation("Generated example from schema.");
+                            setBodyValidation("Generated");
                           } else {
-                            setBodyValidation("Could not generate example from schema.");
+                            setBodyValidation("Cannot generate");
                           }
                         }}
-                        className="rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
+                        className="rounded-md px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
                       >
-                        Generate Example
+                        Generate
                       </button>
+                      {bodyValidation ? (
+                        <span className={[
+                          "ml-auto flex items-center gap-1 text-[10px]",
+                          bodyValidation.startsWith("Valid") || bodyValidation === "Formatted" || bodyValidation === "Generated"
+                            ? "text-green-400"
+                            : "text-orange-400"
+                        ].join(" ")}>
+                          {bodyValidation.startsWith("Valid") || bodyValidation === "Formatted" || bodyValidation === "Generated"
+                            ? <Check size={10} />
+                            : <X size={10} />
+                          }
+                          {bodyValidation}
+                        </span>
+                      ) : null}
                     </div>
 
-                    <div className="flex overflow-hidden rounded border border-vscode-inputBorder bg-vscode-inputBg">
-                      <pre className="m-0 min-w-10 select-none border-r border-vscode-panelBorder px-2 py-2 text-right font-mono text-[11px] text-vscode-muted">
+                    <div className="flex overflow-hidden">
+                      <pre className="m-0 min-w-[32px] select-none border-r border-vscode-panelBorder px-2 py-2 text-right font-mono text-[11px] leading-[18px] text-vscode-descriptionFg"
+                        style={{ background: "var(--vscode-editorWidget-background)" }}
+                      >
                         {buildLineNumbers(editState.body)}
                       </pre>
                       <textarea
                         value={editState.body}
-                        onChange={(event) => onBodyChange(event.target.value)}
-                        className="h-72 flex-1 resize-none bg-transparent p-2 font-mono text-xs focus:outline-none"
+                        onChange={(event) => { onBodyChange(event.target.value); setBodyValidation(null); }}
+                        className="h-72 flex-1 resize-none p-2 font-mono text-xs leading-[18px] focus:outline-none"
+                        style={{
+                          background: "var(--vscode-input-background)",
+                          color: "var(--vscode-input-foreground)"
+                        }}
                       />
                     </div>
                   </div>
                 ) : null}
 
                 {(editState.contentType === "form-data" || editState.contentType === "urlencoded") && (
-                  <div className="space-y-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsFormRaw((prev) => !prev)}
-                      className="rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                    >
-                      {isFormRaw ? "Key/value editor" : "Raw editor"}
-                    </button>
+                  <div>
+                    <div className="flex items-center border-b border-vscode-panelBorder px-3 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsFormRaw((prev) => !prev)}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                      >
+                        {isFormRaw ? <Table2 size={11} /> : <AlignJustify size={11} />}
+                        {isFormRaw ? "Table view" : "Raw"}
+                      </button>
+                    </div>
 
                     {isFormRaw ? (
-                      <textarea
-                        value={editState.body}
-                        onChange={(event) => onBodyChange(event.target.value)}
-                        className="h-40 w-full rounded border border-vscode-inputBorder bg-vscode-inputBg p-2 font-mono text-xs focus:border-vscode-focusBorder focus:outline-none"
-                        placeholder="key=value&key2=value2"
-                      />
+                      <div className="p-3">
+                        <textarea
+                          value={editState.body}
+                          onChange={(event) => onBodyChange(event.target.value)}
+                          className="h-40 w-full rounded-md border border-vscode-inputBorder bg-vscode-inputBg p-2 font-mono text-xs focus:border-vscode-focusBorder focus:outline-none"
+                          placeholder="key=value&key2=value2"
+                        />
+                      </div>
                     ) : (
-                      <div className="space-y-2">
-                        {formRows.map((row, index) => (
-                          <KeyValueRowEditor
-                            key={`form-${index}`}
-                            row={row}
-                            onChange={(updates) => {
-                              const next = [...formRows];
-                              next[index] = { ...next[index], ...updates };
-                              updateFormRows(next);
-                            }}
-                            onDelete={() => updateFormRows(formRows.filter((_row, rowIndex) => rowIndex !== index))}
-                          />
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => updateFormRows([...formRows, { key: "", value: "", enabled: true }])}
-                          className="inline-flex items-center gap-1 rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                        >
-                          <Plus size={12} />
-                          Add field
-                        </button>
+                      <div>
+                        <table className="w-full border-collapse text-xs">
+                          <thead>
+                            <TableHeaderRow columns={["", "Key", "Value", ""]} />
+                          </thead>
+                          <tbody>
+                            {formRows.map((row, index) => (
+                              <KVTableRow
+                                key={`form-${index}`}
+                                row={row}
+                                onChange={(updates) => {
+                                  const next = [...formRows];
+                                  next[index] = { ...next[index], ...updates };
+                                  updateFormRows(next);
+                                }}
+                                onDelete={() => updateFormRows(formRows.filter((_row, rowIndex) => rowIndex !== index))}
+                              />
+                            ))}
+                          </tbody>
+                        </table>
+                        <div className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => updateFormRows([...formRows, { key: "", value: "", enabled: true }])}
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                          >
+                            <Plus size={12} />
+                            Add field
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
                 )}
 
                 {editState.contentType === "raw" || editState.contentType === "binary" || editState.contentType === "none" ? (
-                  <textarea
-                    value={editState.body}
-                    onChange={(event) => onBodyChange(event.target.value)}
-                    className="h-56 w-full rounded border border-vscode-inputBorder bg-vscode-inputBg p-2 font-mono text-xs focus:border-vscode-focusBorder focus:outline-none"
-                    placeholder={editState.contentType === "binary" ? "Binary payload placeholder" : "Request body"}
-                  />
-                ) : null}
-
-                {bodyValidation ? (
-                  <p className="rounded border border-vscode-panelBorder bg-vscode-card px-2 py-1 text-xs text-vscode-muted">
-                    {bodyValidation}
-                  </p>
+                  <div className="p-0">
+                    <textarea
+                      value={editState.body}
+                      onChange={(event) => onBodyChange(event.target.value)}
+                      className="h-56 w-full resize-none border-0 p-3 font-mono text-xs focus:outline-none"
+                      style={{
+                        background: "var(--vscode-input-background)",
+                        color: "var(--vscode-input-foreground)"
+                      }}
+                      placeholder={editState.contentType === "binary" ? "Binary payload placeholder" : "Request body"}
+                    />
+                  </div>
                 ) : null}
               </>
             )}
@@ -454,196 +547,201 @@ export function RequestPanel({
         ) : null}
 
         {activeTab === "auth" ? (
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <label className="text-xs text-vscode-muted">Auth type</label>
-              <select
-                value={editState.authType}
-                onChange={(event) => {
-                  const authType = event.target.value;
-                  if (authType === "none") {
-                    onAuthChange("none", "");
-                    return;
-                  }
-                  if (authType === "bearer") {
-                    onAuthChange("bearer", "");
-                    return;
-                  }
-                  if (authType === "apikey") {
-                    onAuthChange("apikey", JSON.stringify({ name: "X-API-Key", value: "", in: "header" }));
-                    return;
-                  }
-                  if (authType === "basic") {
-                    onAuthChange("basic", JSON.stringify({ username: "", password: "" }));
-                    return;
-                  }
-                  onAuthChange(
-                    "oauth2",
-                    JSON.stringify({ tokenUrl: "", clientId: "", clientSecret: "", token: "" })
-                  );
-                }}
-                className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-              >
-                <option value="none">None</option>
-                <option value="bearer">Bearer Token</option>
-                <option value="apikey">API Key</option>
-                <option value="basic">Basic Auth</option>
-                <option value="oauth2">OAuth 2.0</option>
-              </select>
+          <div>
+            {/* Auth type selector as pill bar */}
+            <div className="flex items-center gap-1 border-b border-vscode-panelBorder px-3 py-2">
+              {[
+                { value: "none", label: "None" },
+                { value: "bearer", label: "Bearer" },
+                { value: "apikey", label: "API Key" },
+                { value: "basic", label: "Basic" },
+                { value: "oauth2", label: "OAuth 2.0" }
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    if (option.value === "none") {
+                      onAuthChange("none", "");
+                    } else if (option.value === "bearer") {
+                      onAuthChange("bearer", "");
+                    } else if (option.value === "apikey") {
+                      onAuthChange("apikey", JSON.stringify({ name: "X-API-Key", value: "", in: "header" }));
+                    } else if (option.value === "basic") {
+                      onAuthChange("basic", JSON.stringify({ username: "", password: "" }));
+                    } else {
+                      onAuthChange("oauth2", JSON.stringify({ tokenUrl: "", clientId: "", clientSecret: "", token: "" }));
+                    }
+                  }}
+                  className={[
+                    "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                    editState.authType === option.value
+                      ? "bg-vscode-buttonBg text-vscode-buttonFg"
+                      : "text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                  ].join(" ")}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
 
-            {editState.authType === "none" ? (
-              <p className="rounded border border-vscode-panelBorder bg-vscode-card p-2 text-xs text-vscode-muted">
-                No authentication set.
-              </p>
-            ) : null}
-
-            {editState.authType === "bearer" ? (
-              <div className="space-y-1">
-                <label className="text-xs text-vscode-muted">Token</label>
-                <input
-                  value={editState.authValue}
-                  onChange={(event) => onAuthChange("bearer", event.target.value)}
-                  className="w-full rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  placeholder="Paste bearer token"
-                />
-              </div>
-            ) : null}
-
-            {editState.authType === "apikey" ? (
-              <div className="space-y-2">
-                <div className="space-y-1">
-                  <label className="text-xs text-vscode-muted">Key name</label>
-                  <input
-                    value={apiKeyConfig.name}
-                    onChange={(event) =>
-                      onAuthChange(
-                        "apikey",
-                        JSON.stringify({ ...apiKeyConfig, name: event.target.value || "X-API-Key" })
-                      )
-                    }
-                    className="w-full rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-vscode-muted">Key value</label>
-                  <input
-                    value={apiKeyConfig.value}
-                    onChange={(event) =>
-                      onAuthChange("apikey", JSON.stringify({ ...apiKeyConfig, value: event.target.value }))
-                    }
-                    className="w-full rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-vscode-muted">Add to</label>
-                  <select
-                    value={apiKeyConfig.in}
-                    onChange={(event) =>
-                      onAuthChange(
-                        "apikey",
-                        JSON.stringify({ ...apiKeyConfig, in: event.target.value as "header" | "query" })
-                      )
-                    }
-                    className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  >
-                    <option value="header">Header</option>
-                    <option value="query">Query Params</option>
-                  </select>
-                </div>
-              </div>
-            ) : null}
-
-            {editState.authType === "basic" ? (
-              <div className="space-y-2">
-                <div className="space-y-1">
-                  <label className="text-xs text-vscode-muted">Username</label>
-                  <input
-                    value={basicConfig.username}
-                    onChange={(event) =>
-                      onAuthChange("basic", JSON.stringify({ ...basicConfig, username: event.target.value }))
-                    }
-                    className="w-full rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-vscode-muted">Password</label>
-                  <input
-                    type="password"
-                    value={basicConfig.password}
-                    onChange={(event) =>
-                      onAuthChange("basic", JSON.stringify({ ...basicConfig, password: event.target.value }))
-                    }
-                    className="w-full rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-                  />
-                </div>
-              </div>
-            ) : null}
-
-            {editState.authType === "oauth2" ? (
-              <div className="space-y-2">
-                <LabeledInput
-                  label="Token URL"
-                  value={oauthConfig.tokenUrl}
-                  onChange={(value) =>
-                    onAuthChange("oauth2", JSON.stringify({ ...oauthConfig, tokenUrl: value }))
-                  }
-                />
-                <LabeledInput
-                  label="Client ID"
-                  value={oauthConfig.clientId}
-                  onChange={(value) =>
-                    onAuthChange("oauth2", JSON.stringify({ ...oauthConfig, clientId: value }))
-                  }
-                />
-                <LabeledInput
-                  label="Client Secret"
-                  value={oauthConfig.clientSecret}
-                  onChange={(value) =>
-                    onAuthChange("oauth2", JSON.stringify({ ...oauthConfig, clientSecret: value }))
-                  }
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    onOAuthTokenRequest(oauthConfig.tokenUrl, oauthConfig.clientId, oauthConfig.clientSecret)
-                  }
-                  className="rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                >
-                  Get Token
-                </button>
-                {oauthConfig.token ? (
-                  <p className="rounded border border-vscode-panelBorder bg-vscode-card px-2 py-1 text-xs text-vscode-muted">
-                    Token loaded.
+            <div className="p-3">
+              {editState.authType === "none" ? (
+                <div className="flex flex-col items-center gap-2 py-6 text-center">
+                  <Shield size={28} strokeWidth={1.2} className="text-vscode-descriptionFg" />
+                  <p className="text-xs text-vscode-descriptionFg">
+                    No authentication configured for this request.
                   </p>
-                ) : null}
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+
+              {editState.authType === "bearer" ? (
+                <AuthField
+                  label="Token"
+                  value={editState.authValue}
+                  onChange={(value) => onAuthChange("bearer", value)}
+                  placeholder="Paste bearer token"
+                  mono
+                />
+              ) : null}
+
+              {editState.authType === "apikey" ? (
+                <div className="space-y-3">
+                  <AuthField
+                    label="Key Name"
+                    value={apiKeyConfig.name}
+                    onChange={(value) =>
+                      onAuthChange("apikey", JSON.stringify({ ...apiKeyConfig, name: value || "X-API-Key" }))
+                    }
+                  />
+                  <AuthField
+                    label="Key Value"
+                    value={apiKeyConfig.value}
+                    onChange={(value) =>
+                      onAuthChange("apikey", JSON.stringify({ ...apiKeyConfig, value }))
+                    }
+                    mono
+                  />
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-vscode-descriptionFg">Add to</label>
+                    <div className="flex gap-1">
+                      {(["header", "query"] as const).map((placement) => (
+                        <button
+                          key={placement}
+                          type="button"
+                          onClick={() =>
+                            onAuthChange("apikey", JSON.stringify({ ...apiKeyConfig, in: placement }))
+                          }
+                          className={[
+                            "rounded-md px-2.5 py-1 text-xs capitalize transition-colors",
+                            apiKeyConfig.in === placement
+                              ? "bg-vscode-buttonBg text-vscode-buttonFg"
+                              : "text-vscode-descriptionFg hover:bg-vscode-listHover"
+                          ].join(" ")}
+                        >
+                          {placement === "query" ? "Query Params" : "Header"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {editState.authType === "basic" ? (
+                <div className="space-y-3">
+                  <AuthField
+                    label="Username"
+                    value={basicConfig.username}
+                    onChange={(value) =>
+                      onAuthChange("basic", JSON.stringify({ ...basicConfig, username: value }))
+                    }
+                  />
+                  <AuthField
+                    label="Password"
+                    value={basicConfig.password}
+                    onChange={(value) =>
+                      onAuthChange("basic", JSON.stringify({ ...basicConfig, password: value }))
+                    }
+                    type="password"
+                  />
+                </div>
+              ) : null}
+
+              {editState.authType === "oauth2" ? (
+                <div className="space-y-3">
+                  <AuthField
+                    label="Token URL"
+                    value={oauthConfig.tokenUrl}
+                    onChange={(value) =>
+                      onAuthChange("oauth2", JSON.stringify({ ...oauthConfig, tokenUrl: value }))
+                    }
+                    mono
+                  />
+                  <AuthField
+                    label="Client ID"
+                    value={oauthConfig.clientId}
+                    onChange={(value) =>
+                      onAuthChange("oauth2", JSON.stringify({ ...oauthConfig, clientId: value }))
+                    }
+                    mono
+                  />
+                  <AuthField
+                    label="Client Secret"
+                    value={oauthConfig.clientSecret}
+                    onChange={(value) =>
+                      onAuthChange("oauth2", JSON.stringify({ ...oauthConfig, clientSecret: value }))
+                    }
+                    mono
+                    type="password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOAuthTokenRequest(oauthConfig.tokenUrl, oauthConfig.clientId, oauthConfig.clientSecret)
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-md bg-vscode-buttonBg px-3 py-1.5 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
+                  >
+                    <Key size={12} />
+                    Get Token
+                  </button>
+                  {oauthConfig.token ? (
+                    <div className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs text-green-400">
+                      <Check size={12} />
+                      Token loaded
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
         {activeTab === "description" ? (
           <div className="flex h-full min-h-0 flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto rounded border border-vscode-panelBorder bg-vscode-card p-3 text-sm">
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {endpoint?.description?.trim() ? (
                 <div className="prose prose-sm max-w-none text-vscode-editorFg">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{endpoint.description}</ReactMarkdown>
                 </div>
               ) : (
-                <p className="text-xs text-vscode-muted">No description.</p>
+                <div className="flex flex-col items-center gap-2 py-8 text-center">
+                  <p className="text-xs text-vscode-descriptionFg">No description available for this endpoint.</p>
+                </div>
               )}
             </div>
             {endpoint ? (
-              <button
-                type="button"
-                onClick={() => {
-                  vscode.postMessage({ command: "highlightInExplorer", endpointId: endpoint.id });
-                }}
-                className="mt-2 inline-flex items-center gap-1 self-start text-xs text-vscode-linkFg hover:underline"
-              >
-                <ExternalLink size={12} />
-                View in Explorer
-              </button>
+              <div className="border-t border-vscode-panelBorder px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    vscode.postMessage({ command: "highlightInExplorer", endpointId: endpoint.id });
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] text-vscode-linkFg hover:underline"
+                >
+                  <ExternalLink size={11} />
+                  View in Explorer
+                </button>
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -651,6 +749,8 @@ export function RequestPanel({
     </section>
   );
 }
+
+/* ── Subcomponents ── */
 
 function PanelTabButton({
   label,
@@ -668,21 +768,58 @@ function PanelTabButton({
       type="button"
       onClick={onClick}
       className={[
-        "mb-[-1px] inline-flex items-center gap-1 border-b px-2 py-1.5",
+        "relative inline-flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium transition-colors",
         active
-          ? "border-vscode-focusBorder text-vscode-editorFg"
-          : "border-transparent text-vscode-muted hover:text-vscode-editorFg"
+          ? "text-vscode-editorFg"
+          : "text-vscode-descriptionFg hover:text-vscode-editorFg"
       ].join(" ")}
     >
       {label}
       {count > 0 ? (
-        <span className="rounded bg-vscode-badgeBg px-1 py-0.5 text-[10px] text-vscode-badgeFg">{count}</span>
+        <span className="rounded-full bg-vscode-badgeBg px-1.5 text-[9px] leading-[16px] text-vscode-badgeFg">
+          {count}
+        </span>
+      ) : null}
+      {active ? (
+        <span
+          className="absolute bottom-0 left-2 right-2 h-[2px] rounded-t"
+          style={{ background: "var(--vscode-focusBorder)" }}
+        />
       ) : null}
     </button>
   );
 }
 
-function KeyValueRowEditor({
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <div className="border-b border-vscode-panelBorder px-3 py-1.5">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-vscode-descriptionFg">
+        {title}
+      </span>
+    </div>
+  );
+}
+
+function TableHeaderRow({ columns }: { columns: string[] }) {
+  return (
+    <tr
+      className="border-b border-vscode-panelBorder text-[10px] font-semibold uppercase tracking-wider text-vscode-descriptionFg"
+      style={{ background: "var(--vscode-editorWidget-background)" }}
+    >
+      {columns.map((col, i) => (
+        <th key={i} className={[
+          "px-2 py-1 text-left font-semibold",
+          i === 0 ? "w-8" : "",
+          i === columns.length - 1 ? "w-8" : ""
+        ].join(" ")}>
+          {col}
+        </th>
+      ))}
+    </tr>
+  );
+}
+
+function KVTableRow({
   row,
   onChange,
   onDelete,
@@ -694,56 +831,79 @@ function KeyValueRowEditor({
   datalistId?: string;
 }): JSX.Element {
   return (
-    <div className="grid grid-cols-[20px_1fr_1fr_auto] items-center gap-2">
-      <input
-        type="checkbox"
-        checked={row.enabled}
-        onChange={(event) => onChange({ enabled: event.target.checked })}
-      />
-      <input
-        value={row.key}
-        list={datalistId}
-        onChange={(event) => onChange({ key: event.target.value })}
-        placeholder="Key"
-        className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-      />
-      <input
-        value={row.value}
-        onChange={(event) => onChange({ value: event.target.value })}
-        placeholder="Value"
-        className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
-      />
-      <button
-        type="button"
-        onClick={onDelete}
-        className="rounded border border-vscode-panelBorder px-1.5 py-1 text-[11px] hover:bg-vscode-listHover"
-      >
-        Remove
-      </button>
-    </div>
+    <tr className="group border-b border-vscode-panelBorder last:border-b-0 hover:bg-vscode-listHover">
+      <td className="w-8 px-2 py-1.5 text-center">
+        <input
+          type="checkbox"
+          checked={row.enabled}
+          onChange={(event) => onChange({ enabled: event.target.checked })}
+          className="h-3.5 w-3.5 cursor-pointer accent-vscode-focusBorder"
+        />
+      </td>
+      <td className="px-2 py-1.5">
+        <input
+          value={row.key}
+          list={datalistId}
+          onChange={(event) => onChange({ key: event.target.value })}
+          placeholder="Key"
+          className="w-full rounded border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-xs text-vscode-inputFg hover:border-vscode-inputBorder focus:border-vscode-focusBorder focus:bg-vscode-inputBg focus:outline-none"
+        />
+      </td>
+      <td className="px-2 py-1.5">
+        <input
+          value={row.value}
+          onChange={(event) => onChange({ value: event.target.value })}
+          placeholder="Value"
+          className="w-full rounded border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-xs text-vscode-inputFg hover:border-vscode-inputBorder focus:border-vscode-focusBorder focus:bg-vscode-inputBg focus:outline-none"
+        />
+      </td>
+      <td className="w-8 px-1 py-1.5 text-center">
+        <button
+          type="button"
+          onClick={onDelete}
+          className="rounded p-0.5 text-vscode-descriptionFg opacity-0 transition-opacity group-hover:opacity-100 hover:bg-vscode-listHover hover:text-red-400"
+          aria-label="Remove row"
+        >
+          <Trash2 size={12} />
+        </button>
+      </td>
+    </tr>
   );
 }
 
-function LabeledInput({
+function AuthField({
   label,
   value,
-  onChange
+  onChange,
+  placeholder,
+  mono = false,
+  type = "text"
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
-}): JSX.Element {
+  placeholder?: string;
+  mono?: boolean;
+  type?: "text" | "password";
+}) {
   return (
     <div className="space-y-1">
-      <label className="text-xs text-vscode-muted">{label}</label>
+      <label className="text-[11px] font-medium text-vscode-descriptionFg">{label}</label>
       <input
+        type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs focus:border-vscode-focusBorder focus:outline-none"
+        placeholder={placeholder}
+        className={[
+          "w-full rounded-md border border-vscode-inputBorder bg-vscode-inputBg px-2.5 py-1.5 text-xs focus:border-vscode-focusBorder focus:outline-none",
+          mono ? "font-mono" : ""
+        ].join(" ")}
       />
     </div>
   );
 }
+
+/* ── Helpers ── */
 
 function upsertOrAppendHeader(rows: KeyValueRow[], key: string, value: string): KeyValueRow[] {
   const next = [...rows];

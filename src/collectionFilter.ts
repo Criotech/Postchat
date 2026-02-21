@@ -83,3 +83,4 @@ export function filterCollectionMarkdown(markdown: string, userQuery: string): s
 
   return [header, truncationNote, ...selectedBlocks].filter(Boolean).join("\n\n");
 }
+

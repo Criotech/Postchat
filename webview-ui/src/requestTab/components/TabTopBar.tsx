@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, MoreVertical, Play, Sparkles } from "lucide-react";
+import {
+  ChevronDown,
+  Code2,
+  Copy,
+  LoaderCircle,
+  MoreVertical,
+  Play,
+  RotateCcw,
+  Save,
+  Send,
+  Sparkles
+} from "lucide-react";
 import type { RequestEditState } from "../types";
 import { METHOD_COLORS } from "../utils";
 
@@ -66,16 +77,18 @@ export function TabTopBar({
   }, []);
 
   return (
-    <header className="border-b border-vscode-panelBorder bg-vscode-editorBg px-3 py-2">
-      <div className="flex items-center gap-2">
+    <header className="border-b border-vscode-panelBorder px-3 py-2.5">
+      {/* Main URL bar row */}
+      <div className="flex items-stretch gap-0">
+        {/* Method selector */}
         <div className="relative">
           <select
             value={editState.method}
             onChange={(event) => onMethodChange(event.target.value)}
-            className="h-10 rounded border px-3 pr-6 text-sm font-semibold text-white focus:outline-none"
+            className="h-[36px] appearance-none rounded-l-md border border-r-0 pl-3 pr-7 font-mono text-[13px] font-bold text-white focus:outline-none focus:ring-1 focus:ring-inset focus:ring-vscode-focusBorder"
             style={{
               backgroundColor: methodColor,
-              borderColor: "color-mix(in srgb, var(--vscode-panel-border) 70%, transparent)"
+              borderColor: methodColor
             }}
             aria-label="HTTP method"
           >
@@ -85,100 +98,132 @@ export function TabTopBar({
               </option>
             ))}
           </select>
+          <ChevronDown
+            size={12}
+            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-white/70"
+            aria-hidden="true"
+          />
           {isModified ? (
             <span
-              className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-vscode-focusBorder"
-              title="Modified from original endpoint"
-              aria-label="Modified from original endpoint"
+              className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 bg-vscode-focusBorder"
+              style={{ borderColor: "var(--vscode-editor-background)" }}
+              title="Modified from original"
+              aria-label="Modified from original"
             />
           ) : null}
         </div>
 
+        {/* URL input */}
         <input
           id="postchat-request-url-input"
           value={editState.url}
           onChange={(event) => onUrlChange(event.target.value)}
           placeholder="Enter request URL"
           className={[
-            "h-10 min-w-0 flex-1 rounded border border-vscode-inputBorder bg-vscode-inputBg px-3 text-sm text-vscode-inputFg placeholder:text-vscode-placeholder",
-            "focus:border-vscode-focusBorder focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder",
-            flashUrlBar ? "postchat-url-pulse border-vscode-focusBorder" : ""
+            "h-[36px] min-w-0 flex-1 border border-r-0 font-mono text-[13px] px-3",
+            "focus:outline-none focus:ring-1 focus:ring-inset focus:ring-vscode-focusBorder",
+            flashUrlBar ? "postchat-url-pulse" : ""
           ].join(" ")}
+          style={{
+            background: "var(--vscode-input-background)",
+            color: "var(--vscode-input-foreground)",
+            borderColor: "var(--vscode-input-border, var(--vscode-panel-border))"
+          }}
           aria-label="Request URL"
         />
 
-        <div className="flex flex-col items-end gap-0.5">
-          <button
-            type="button"
-            onClick={onSend}
-            disabled={isRunning}
-            className="inline-flex h-10 items-center gap-2 rounded bg-vscode-buttonBg px-3 text-sm font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isRunning ? <LoaderCircle size={15} className="animate-spin" /> : <Play size={15} />}
-            {isRunning ? "Sending" : "Send"}
-          </button>
-          <span className="text-[10px] text-vscode-muted">{shortcutHint}</span>
-        </div>
+        {/* Send button */}
+        <button
+          type="button"
+          onClick={onSend}
+          disabled={isRunning}
+          className="inline-flex h-[36px] items-center gap-1.5 rounded-r-md px-4 text-[13px] font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-70"
+          style={{
+            backgroundColor: isRunning ? "#6B7280" : "#3B82F6",
+          }}
+        >
+          {isRunning ? (
+            <LoaderCircle size={14} className="animate-spin" />
+          ) : (
+            <Send size={14} />
+          )}
+          {isRunning ? "Sending..." : "Send"}
+        </button>
+      </div>
 
+      {/* Action row below URL bar */}
+      <div className="mt-2 flex items-center gap-1.5">
         <button
           type="button"
           onClick={onAskAI}
-          className="inline-flex h-10 items-center gap-2 rounded bg-vscode-buttonSecondaryBg px-3 text-sm font-medium text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-vscode-editorFg hover:bg-vscode-listHover"
         >
-          <Sparkles size={15} />
+          <Sparkles size={12} className="text-purple-400" />
           Ask AI
         </button>
+
+        <Separator />
 
         <button
           type="button"
           onClick={onResetToOriginal}
           disabled={!isModified}
-          className="inline-flex h-10 items-center rounded border border-vscode-panelBorder px-3 text-xs text-vscode-editorFg hover:bg-vscode-listHover disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg disabled:cursor-not-allowed disabled:opacity-40"
         >
+          <RotateCcw size={11} />
           Reset
         </button>
 
+        <span className="ml-auto text-[10px] text-vscode-descriptionFg">
+          {shortcutHint} to send
+        </span>
+
+        <Separator />
+
+        {/* More menu */}
         <div className="relative" ref={menuRef}>
           <button
             type="button"
             onClick={() => setIsMenuOpen((prev) => !prev)}
-            className="inline-flex h-10 w-10 items-center justify-center rounded border border-vscode-panelBorder bg-vscode-editorBg text-vscode-editorFg hover:bg-vscode-listHover"
+            className="inline-flex items-center gap-1 rounded-md p-1 text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
             aria-label="More actions"
           >
-            <MoreVertical size={16} />
+            <MoreVertical size={14} />
           </button>
 
           {isMenuOpen ? (
-            <div className="absolute right-0 top-[calc(100%+0.4rem)] z-30 min-w-52 rounded border border-vscode-panelBorder bg-vscode-editorBg p-1">
+            <div
+              className="absolute right-0 top-[calc(100%+4px)] z-30 min-w-[200px] rounded-md border border-vscode-panelBorder py-1 shadow-lg"
+              style={{ background: "var(--vscode-menu-background, var(--vscode-editorWidget-background))" }}
+            >
+              <MenuSectionLabel>Code Snippets</MenuSectionLabel>
               <MenuButton
-                label="Copy as curl"
-                onClick={() => {
-                  onCopySnippet("curl");
-                  setIsMenuOpen(false);
-                }}
+                icon={<Copy size={12} />}
+                label="Copy as cURL"
+                onClick={() => { onCopySnippet("curl"); setIsMenuOpen(false); }}
               />
               <MenuButton
+                icon={<Code2 size={12} />}
                 label="Copy as fetch"
-                onClick={() => {
-                  onCopySnippet("fetch");
-                  setIsMenuOpen(false);
-                }}
+                onClick={() => { onCopySnippet("fetch"); setIsMenuOpen(false); }}
               />
               <MenuButton
+                icon={<Code2 size={12} />}
                 label="Copy as Python"
-                onClick={() => {
-                  onCopySnippet("python");
-                  setIsMenuOpen(false);
-                }}
+                onClick={() => { onCopySnippet("python"); setIsMenuOpen(false); }}
               />
               <MenuButton
+                icon={<Code2 size={12} />}
                 label="Copy as axios"
-                onClick={() => {
-                  onCopySnippet("axios");
-                  setIsMenuOpen(false);
-                }}
+                onClick={() => { onCopySnippet("axios"); setIsMenuOpen(false); }}
               />
-              <MenuButton label="Save to Collection" disabled onClick={onSaveToCollection} />
+              <MenuDivider />
+              <MenuButton
+                icon={<Save size={12} />}
+                label="Save to Collection"
+                disabled
+                onClick={onSaveToCollection}
+              />
             </div>
           ) : null}
         </div>
@@ -187,20 +232,49 @@ export function TabTopBar({
   );
 }
 
+function Separator() {
+  return (
+    <span
+      className="mx-0.5 inline-block h-3.5 w-px shrink-0"
+      style={{ background: "var(--vscode-panelSection-border, rgba(128,128,128,0.25))" }}
+      aria-hidden="true"
+    />
+  );
+}
+
+function MenuSectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-vscode-descriptionFg">
+      {children}
+    </div>
+  );
+}
+
+function MenuDivider() {
+  return (
+    <div
+      className="my-1 h-px"
+      style={{ background: "var(--vscode-menu-separatorBackground, var(--vscode-panel-border))" }}
+    />
+  );
+}
+
 type MenuButtonProps = {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  icon?: React.ReactNode;
 };
 
-function MenuButton({ label, onClick, disabled = false }: MenuButtonProps): JSX.Element {
+function MenuButton({ label, onClick, disabled = false, icon }: MenuButtonProps): JSX.Element {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="block w-full rounded px-2 py-1.5 text-left text-xs text-vscode-editorFg hover:bg-vscode-listHover disabled:cursor-not-allowed disabled:opacity-50"
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-vscode-editorFg hover:bg-vscode-listHover disabled:cursor-not-allowed disabled:opacity-40"
     >
+      {icon ? <span className="text-vscode-descriptionFg">{icon}</span> : null}
       {label}
     </button>
   );

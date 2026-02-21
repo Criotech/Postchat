@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { ImageIcon, LoaderCircle, Search, Send, WrapText } from "lucide-react";
+import {
+  Check,
+  Clock,
+  Copy,
+  HardDrive,
+  ImageIcon,
+  LoaderCircle,
+  MessageSquare,
+  Search,
+  Send,
+  WrapText,
+  X
+} from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import ReactMarkdown from "react-markdown";
@@ -47,6 +59,7 @@ export function ResponsePanel({
   const [searchText, setSearchText] = useState("");
   const [aiMessages, setAiMessages] = useState<AiHistoryTurn[]>([]);
   const [aiInput, setAiInput] = useState("");
+  const [copiedBody, setCopiedBody] = useState(false);
 
   useEffect(() => {
     if (!aiResponse) {
@@ -95,99 +108,153 @@ export function ResponsePanel({
     setAiInput("");
   };
 
+  const handleCopyBody = () => {
+    if (!runResult) return;
+    navigator.clipboard.writeText(runResult.body);
+    setCopiedBody(true);
+    setTimeout(() => setCopiedBody(false), 1200);
+  };
+
   const showEmptyState = !runResult && aiMessages.length === 0 && !isAiLoading;
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-vscode-editorBg">
+    <section className="flex h-full min-h-0 flex-col">
       {showEmptyState ? (
-        <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-vscode-muted">
-          <Send size={54} strokeWidth={1.2} />
-          <p className="text-sm font-medium">Send a request to see the response</p>
-          <p className="max-w-sm text-xs">Or click Ask AI to get help with this endpoint</p>
+        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+          <div
+            className="flex h-14 w-14 items-center justify-center rounded-xl"
+            style={{ background: "var(--vscode-editorWidget-background)" }}
+          >
+            <Send size={24} strokeWidth={1.2} className="text-vscode-descriptionFg" />
+          </div>
+          <p className="text-sm font-medium text-vscode-editorFg">Send a request to see the response</p>
+          <p className="max-w-xs text-xs text-vscode-descriptionFg">
+            Or click Ask AI to get help with this endpoint
+          </p>
         </div>
       ) : (
         <>
-          <nav className="flex border-b border-vscode-panelBorder px-2 pt-2 text-xs">
-            <ResponseTabButton
-              active={activeResponseTab === "body"}
-              label="Response"
-              badge={runResult ? `${responseSizeKb} KB` : undefined}
-              onClick={() => onChangeResponseTab("body")}
-            />
-            <ResponseTabButton
-              active={activeResponseTab === "headers"}
-              label="Headers"
-              badge={runResult ? String(Object.keys(runResult.headers).length) : undefined}
-              onClick={() => onChangeResponseTab("headers")}
-            />
-            <ResponseTabButton
-              active={activeResponseTab === "raw"}
-              label="Raw"
-              onClick={() => onChangeResponseTab("raw")}
-            />
-            <ResponseTabButton
-              active={activeResponseTab === "ai"}
-              label="AI Assistant"
-              badge={aiMessages.length > 0 ? String(aiMessages.length) : undefined}
-              onClick={() => onChangeResponseTab("ai")}
-            />
-          </nav>
+          {/* Tabs + status summary in one bar */}
+          <div className="flex items-end border-b border-vscode-panelBorder">
+            <nav className="flex text-[12px]">
+              <ResponseTabButton
+                active={activeResponseTab === "body"}
+                label="Body"
+                badge={runResult ? `${responseSizeKb} KB` : undefined}
+                onClick={() => onChangeResponseTab("body")}
+              />
+              <ResponseTabButton
+                active={activeResponseTab === "headers"}
+                label="Headers"
+                badge={runResult ? String(Object.keys(runResult.headers).length) : undefined}
+                onClick={() => onChangeResponseTab("headers")}
+              />
+              <ResponseTabButton
+                active={activeResponseTab === "raw"}
+                label="Raw"
+                onClick={() => onChangeResponseTab("raw")}
+              />
+              <ResponseTabButton
+                active={activeResponseTab === "ai"}
+                label="AI"
+                badge={aiMessages.length > 0 ? String(aiMessages.length) : undefined}
+                onClick={() => onChangeResponseTab("ai")}
+              />
+            </nav>
 
-          <div className="min-h-0 flex-1 overflow-hidden p-3">
+            {/* Status chips on the right */}
+            {runResult ? (
+              <div className="ml-auto flex items-center gap-2 px-3 pb-1.5">
+                <StatusChip
+                  status={runResult.status}
+                  text={`${runResult.status} ${runResult.statusText || ""}`}
+                />
+                <div className="flex items-center gap-1 text-[11px] text-vscode-descriptionFg">
+                  <Clock size={11} />
+                  <span>{runResult.durationMs} ms</span>
+                </div>
+                <div className="flex items-center gap-1 text-[11px] text-vscode-descriptionFg">
+                  <HardDrive size={11} />
+                  <span>{responseSizeKb} KB</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-hidden">
             {activeResponseTab === "body" ? (
-              <div className="flex h-full min-h-0 flex-col gap-2">
+              <div className="flex h-full min-h-0 flex-col">
                 {runResult ? (
                   <>
-                    <StatusBar result={runResult} sizeKb={responseSizeKb} />
-
-                    <div className="flex flex-wrap items-center gap-2 rounded border border-vscode-panelBorder bg-vscode-card px-2 py-1">
+                    {/* Toolbar */}
+                    <div className="flex items-center gap-1 border-b border-vscode-panelBorder px-3 py-1.5">
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard.writeText(runResult.body)}
-                        className="rounded border border-vscode-panelBorder px-2 py-0.5 text-xs hover:bg-vscode-listHover"
+                        onClick={handleCopyBody}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
                       >
-                        Copy
+                        {copiedBody ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
+                        {copiedBody ? "Copied" : "Copy"}
                       </button>
                       <button
                         type="button"
                         onClick={() => setWordWrap((prev) => !prev)}
-                        className="inline-flex items-center gap-1 rounded border border-vscode-panelBorder px-2 py-0.5 text-xs hover:bg-vscode-listHover"
+                        className={[
+                          "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] transition-colors",
+                          wordWrap
+                            ? "bg-vscode-listHover text-vscode-editorFg"
+                            : "text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                        ].join(" ")}
                       >
-                        <WrapText size={12} />
-                        Word Wrap
+                        <WrapText size={11} />
+                        Wrap
                       </button>
-                      <div className="ml-auto inline-flex items-center gap-1">
-                        <Search size={12} className="text-vscode-muted" />
+
+                      <div className="ml-auto inline-flex items-center gap-1 rounded-md border border-transparent focus-within:border-vscode-focusBorder">
+                        <Search size={11} className="ml-2 text-vscode-descriptionFg" />
                         <input
                           value={searchText}
                           onChange={(event) => setSearchText(event.target.value)}
-                          placeholder="Search in response"
-                          className="rounded border border-vscode-inputBorder bg-vscode-inputBg px-2 py-1 text-xs"
+                          placeholder="Search"
+                          className="w-28 bg-transparent px-1.5 py-0.5 text-[11px] focus:outline-none"
                         />
-                        {searchText ? <span className="text-[11px] text-vscode-muted">{searchMatchCount}</span> : null}
+                        {searchText ? (
+                          <>
+                            <span className="text-[10px] text-vscode-descriptionFg">{searchMatchCount}</span>
+                            <button
+                              type="button"
+                              onClick={() => setSearchText("")}
+                              className="mr-1 rounded p-0.5 text-vscode-descriptionFg hover:text-vscode-editorFg"
+                            >
+                              <X size={10} />
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
 
                     {contentType.startsWith("text/html") ? (
-                      <p className="text-xs text-vscode-muted">HTML response detected. Open in browser if you need rendering.</p>
+                      <p className="border-b border-vscode-panelBorder px-3 py-1.5 text-[11px] text-vscode-descriptionFg">
+                        HTML response detected. Open in browser for rendering.
+                      </p>
                     ) : null}
 
                     {contentType.startsWith("image/") && runResult.body.startsWith("data:image") ? (
-                      <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded border border-vscode-panelBorder bg-vscode-card p-3">
+                      <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
                         <img src={runResult.body} alt="Response content" className="max-w-full" />
                       </div>
                     ) : contentType.startsWith("image/") ? (
-                      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded border border-vscode-panelBorder bg-vscode-card p-3 text-vscode-muted">
+                      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-vscode-descriptionFg">
                         <ImageIcon size={26} />
-                        <p className="text-xs">Image response received. Binary preview is unavailable in this view.</p>
+                        <p className="text-xs">Binary image preview is unavailable in this view.</p>
                       </div>
                     ) : (
-                      <div className="min-h-0 flex-1 overflow-auto rounded border border-vscode-panelBorder">
+                      <div className="min-h-0 flex-1 overflow-auto">
                         <SyntaxHighlighter
                           language={detectedLanguage}
                           style={vscDarkPlus}
                           wrapLongLines={wordWrap}
-                          customStyle={{ margin: 0, minHeight: "100%", fontSize: "0.78rem" }}
+                          customStyle={{ margin: 0, minHeight: "100%", fontSize: "12px", lineHeight: "18px" }}
                         >
                           {displayBody || "(empty response)"}
                         </SyntaxHighlighter>
@@ -195,61 +262,76 @@ export function ResponsePanel({
                     )}
 
                     {hasLargeResponse && !showFullResponse ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowFullResponse(true)}
-                        className="self-start rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                      >
-                        Show full response ({responseSizeKb} KB)
-                      </button>
+                      <div className="border-t border-vscode-panelBorder px-3 py-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setShowFullResponse(true)}
+                          className="text-[11px] text-vscode-linkFg hover:underline"
+                        >
+                          Show full response ({responseSizeKb} KB)
+                        </button>
+                      </div>
                     ) : null}
                   </>
                 ) : isRunning ? (
                   <LoadingState label="Waiting for response..." />
                 ) : runError ? (
-                  <p className="rounded border border-vscode-errorBorder bg-vscode-errorBg p-2 text-sm text-vscode-errorFg">
-                    {runError}
-                  </p>
+                  <div className="p-3">
+                    <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                      {runError}
+                    </div>
+                  </div>
                 ) : (
-                  <p className="text-xs text-vscode-muted">No response yet.</p>
+                  <div className="flex h-full items-center justify-center">
+                    <p className="text-xs text-vscode-descriptionFg">No response yet.</p>
+                  </div>
                 )}
               </div>
             ) : null}
 
             {activeResponseTab === "headers" ? (
-              <div className="flex h-full min-h-0 flex-col gap-2">
+              <div className="flex h-full min-h-0 flex-col">
                 {!runResult ? (
-                  <p className="text-xs text-vscode-muted">No headers available yet.</p>
+                  <div className="flex h-full items-center justify-center">
+                    <p className="text-xs text-vscode-descriptionFg">No headers available yet.</p>
+                  </div>
                 ) : (
                   <>
-                    <button
-                      type="button"
-                      onClick={() => navigator.clipboard.writeText(JSON.stringify(runResult.headers, null, 2))}
-                      className="self-start rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                    >
-                      Copy all as JSON
-                    </button>
-                    <div className="min-h-0 flex-1 overflow-auto rounded border border-vscode-panelBorder">
+                    <div className="border-b border-vscode-panelBorder px-3 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard.writeText(JSON.stringify(runResult.headers, null, 2))}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                      >
+                        <Copy size={11} />
+                        Copy all as JSON
+                      </button>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-auto">
                       <table className="w-full border-collapse text-xs">
-                        <thead className="sticky top-0 bg-vscode-card">
-                          <tr>
-                            <th className="border-b border-vscode-panelBorder px-2 py-1 text-left">Header</th>
-                            <th className="border-b border-vscode-panelBorder px-2 py-1 text-left">Value</th>
-                            <th className="border-b border-vscode-panelBorder px-2 py-1 text-right">Action</th>
+                        <thead>
+                          <tr
+                            className="sticky top-0 border-b border-vscode-panelBorder text-[10px] font-semibold uppercase tracking-wider text-vscode-descriptionFg"
+                            style={{ background: "var(--vscode-editorWidget-background)" }}
+                          >
+                            <th className="px-3 py-1.5 text-left font-semibold">Key</th>
+                            <th className="px-3 py-1.5 text-left font-semibold">Value</th>
+                            <th className="w-12 px-2 py-1.5 text-right font-semibold" />
                           </tr>
                         </thead>
                         <tbody>
                           {Object.entries(runResult.headers).map(([key, value]) => (
-                            <tr key={key}>
-                              <td className="border-b border-vscode-panelBorder px-2 py-1 font-mono">{key}</td>
-                              <td className="border-b border-vscode-panelBorder px-2 py-1 font-mono">{value}</td>
-                              <td className="border-b border-vscode-panelBorder px-2 py-1 text-right">
+                            <tr key={key} className="group border-b border-vscode-panelBorder last:border-b-0 hover:bg-vscode-listHover">
+                              <td className="px-3 py-1.5 font-mono text-vscode-editorFg">{key}</td>
+                              <td className="px-3 py-1.5 font-mono text-vscode-descriptionFg">{value}</td>
+                              <td className="px-2 py-1.5 text-right">
                                 <button
                                   type="button"
                                   onClick={() => navigator.clipboard.writeText(value)}
-                                  className="rounded border border-vscode-panelBorder px-1.5 py-0.5 text-[11px] hover:bg-vscode-listHover"
+                                  className="rounded p-0.5 text-vscode-descriptionFg opacity-0 transition-opacity group-hover:opacity-100 hover:text-vscode-editorFg"
+                                  aria-label={`Copy ${key}`}
                                 >
-                                  Copy
+                                  <Copy size={12} />
                                 </button>
                               </td>
                             </tr>
@@ -263,88 +345,122 @@ export function ResponsePanel({
             ) : null}
 
             {activeResponseTab === "raw" ? (
-              <div className="flex h-full min-h-0 flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!runResult) {
-                      return;
-                    }
-                    navigator.clipboard.writeText(buildRawHttpResponse(runResult));
-                  }}
-                  className="self-start rounded border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                >
-                  Copy All
-                </button>
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="border-b border-vscode-panelBorder px-3 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!runResult) return;
+                      navigator.clipboard.writeText(buildRawHttpResponse(runResult));
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                  >
+                    <Copy size={11} />
+                    Copy All
+                  </button>
+                </div>
                 <textarea
                   readOnly
                   value={runResult ? buildRawHttpResponse(runResult) : ""}
-                  className="h-full min-h-0 w-full resize-none rounded border border-vscode-panelBorder bg-vscode-card p-2 font-mono text-xs focus:outline-none"
+                  className="min-h-0 flex-1 resize-none border-0 p-3 font-mono text-xs leading-[18px] focus:outline-none"
+                  style={{
+                    background: "var(--vscode-input-background)",
+                    color: "var(--vscode-input-foreground)"
+                  }}
                 />
               </div>
             ) : null}
 
             {activeResponseTab === "ai" ? (
-              <div className="flex h-full min-h-0 flex-col gap-2">
+              <div className="flex h-full min-h-0 flex-col">
                 {aiMessages.length === 0 && !isAiLoading ? (
-                  <div className="flex flex-wrap gap-2">
-                    {buildQuickActions(runResult).map((label) => (
-                      <button
-                        key={label}
-                        type="button"
-                        onClick={() => sendAiPrompt(label)}
-                        className="rounded-full border border-vscode-panelBorder px-2 py-1 text-xs hover:bg-vscode-listHover"
-                      >
-                        {label}
-                      </button>
-                    ))}
+                  <div className="border-b border-vscode-panelBorder px-3 py-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      {buildQuickActions(runResult).map((label) => (
+                        <button
+                          key={label}
+                          type="button"
+                          onClick={() => sendAiPrompt(label)}
+                          className="rounded-md border border-vscode-panelBorder px-2 py-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-listHover hover:text-vscode-editorFg"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
 
-                <div className="min-h-0 flex-1 overflow-auto rounded border border-vscode-panelBorder bg-vscode-card p-2">
+                {/* Chat area */}
+                <div className="min-h-0 flex-1 overflow-auto p-3">
                   {aiMessages.length === 0 && !isAiLoading ? (
-                    <p className="text-xs text-vscode-muted">Ask for help about this request and response.</p>
+                    <div className="flex flex-col items-center gap-2 py-6 text-center">
+                      <MessageSquare size={24} strokeWidth={1.2} className="text-vscode-descriptionFg" />
+                      <p className="text-xs text-vscode-descriptionFg">
+                        Ask for help about this request and response.
+                      </p>
+                    </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {aiMessages.map((message, index) => (
-                        <article key={`ai-${index}`} className="space-y-1">
-                          <p className="text-[11px] uppercase tracking-wide text-vscode-muted">{message.role}</p>
+                        <div
+                          key={`ai-${index}`}
+                          className={[
+                            "rounded-lg px-3 py-2",
+                            message.role === "user"
+                              ? ""
+                              : ""
+                          ].join(" ")}
+                          style={
+                            message.role === "user"
+                              ? { background: "var(--vscode-editorWidget-background)" }
+                              : undefined
+                          }
+                        >
+                          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-vscode-descriptionFg">
+                            {message.role === "user" ? "You" : "AI"}
+                          </p>
                           {message.role === "assistant" ? (
-                            <div className="prose prose-sm max-w-none text-vscode-editorFg">
+                            <div className="prose prose-sm max-w-none text-xs text-vscode-editorFg">
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                             </div>
                           ) : (
-                            <p className="text-sm">{message.content}</p>
+                            <p className="text-xs text-vscode-editorFg">{message.content}</p>
                           )}
-                        </article>
+                        </div>
                       ))}
                       {isAiLoading ? <LoadingState label="Thinking..." compact /> : null}
                     </div>
                   )}
                 </div>
 
-                <div className="flex items-end gap-2 rounded border border-vscode-inputBorder bg-vscode-inputBg p-2">
-                  <textarea
-                    rows={1}
-                    value={aiInput}
-                    onChange={(event) => setAiInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        sendAiPrompt(aiInput);
-                      }
-                    }}
-                    placeholder="Ask about this endpoint"
-                    className="max-h-32 min-h-6 flex-1 resize-none bg-transparent text-sm focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => sendAiPrompt(aiInput)}
-                    disabled={!aiInput.trim() || isAiLoading}
-                    className="rounded bg-vscode-buttonBg px-3 py-1.5 text-xs text-vscode-buttonFg hover:bg-vscode-buttonHover disabled:cursor-not-allowed disabled:opacity-50"
+                {/* Input */}
+                <div className="border-t border-vscode-panelBorder p-2">
+                  <div
+                    className="flex items-end gap-2 rounded-md border border-vscode-inputBorder px-2 py-1.5"
+                    style={{ background: "var(--vscode-input-background)" }}
                   >
-                    Send
-                  </button>
+                    <textarea
+                      rows={1}
+                      value={aiInput}
+                      onChange={(event) => setAiInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          sendAiPrompt(aiInput);
+                        }
+                      }}
+                      placeholder="Ask about this endpoint..."
+                      className="max-h-32 min-h-6 flex-1 resize-none bg-transparent text-xs focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => sendAiPrompt(aiInput)}
+                      disabled={!aiInput.trim() || isAiLoading}
+                      className="rounded-md bg-vscode-buttonBg p-1.5 text-vscode-buttonFg hover:bg-vscode-buttonHover disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Send size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -355,38 +471,20 @@ export function ResponsePanel({
   );
 }
 
-function StatusBar({ result, sizeKb }: { result: ExecutionResult; sizeKb: number }): JSX.Element {
-  const statusStyle =
-    result.status >= 400
-      ? {
-          backgroundColor: "var(--vscode-inputValidation-errorBackground)",
-          color: "var(--vscode-inputValidation-errorForeground)",
-          borderColor: "var(--vscode-inputValidation-errorBorder)"
-        }
-      : result.status >= 300
-        ? {
-            backgroundColor: "var(--vscode-editorWidget-background)",
-            color: "var(--vscode-editor-foreground)",
-            borderColor: "var(--vscode-focusBorder)"
-          }
-        : {
-            backgroundColor: "var(--vscode-button-secondaryBackground)",
-            color: "var(--vscode-button-secondaryForeground)",
-            borderColor: "var(--vscode-panel-border)"
-          };
+/* ── Subcomponents ── */
+
+function StatusChip({ status, text }: { status: number; text: string }) {
+  let colorClass = "bg-green-500/15 text-green-400 border-green-500/30";
+  if (status >= 400) {
+    colorClass = "bg-red-500/15 text-red-400 border-red-500/30";
+  } else if (status >= 300) {
+    colorClass = "bg-blue-500/15 text-blue-400 border-blue-500/30";
+  }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded border border-vscode-panelBorder bg-vscode-card px-2 py-1 text-xs">
-      <span
-        className="rounded border px-2 py-0.5 font-medium"
-        style={statusStyle}
-      >
-        {result.status}
-      </span>
-      <span className="font-medium">{result.statusText || "Unknown"}</span>
-      <span className="ml-auto text-vscode-muted">{result.durationMs} ms</span>
-      <span className="text-vscode-muted">{sizeKb} KB</span>
-    </div>
+    <span className={`rounded-md border px-2 py-[2px] font-mono text-[11px] font-bold ${colorClass}`}>
+      {text}
+    </span>
   );
 }
 
@@ -406,14 +504,24 @@ function ResponseTabButton({
       type="button"
       onClick={onClick}
       className={[
-        "mb-[-1px] inline-flex items-center gap-1 border-b px-2 py-1.5",
+        "relative inline-flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium transition-colors",
         active
-          ? "border-vscode-focusBorder text-vscode-editorFg"
-          : "border-transparent text-vscode-muted hover:text-vscode-editorFg"
+          ? "text-vscode-editorFg"
+          : "text-vscode-descriptionFg hover:text-vscode-editorFg"
       ].join(" ")}
     >
       {label}
-      {badge ? <span className="rounded bg-vscode-badgeBg px-1 py-0.5 text-[10px] text-vscode-badgeFg">{badge}</span> : null}
+      {badge ? (
+        <span className="rounded-full bg-vscode-badgeBg px-1.5 text-[9px] leading-[16px] text-vscode-badgeFg">
+          {badge}
+        </span>
+      ) : null}
+      {active ? (
+        <span
+          className="absolute bottom-0 left-2 right-2 h-[2px] rounded-t"
+          style={{ background: "var(--vscode-focusBorder)" }}
+        />
+      ) : null}
     </button>
   );
 }
@@ -471,9 +579,9 @@ function countSearchMatches(value: string, query: string): number {
 
 function LoadingState({ label, compact = false }: { label: string; compact?: boolean }): JSX.Element {
   return (
-    <div className={compact ? "inline-flex items-center gap-2 text-xs" : "flex h-full items-center justify-center gap-2 text-sm"}>
-      <LoaderCircle size={compact ? 14 : 18} className="animate-spin" />
-      <span>{label}</span>
+    <div className={compact ? "inline-flex items-center gap-2 px-3 py-2 text-xs" : "flex h-full items-center justify-center gap-2 text-sm"}>
+      <LoaderCircle size={compact ? 14 : 18} className="animate-spin text-vscode-descriptionFg" />
+      <span className="text-vscode-descriptionFg">{label}</span>
     </div>
   );
 }
@@ -481,13 +589,13 @@ function LoadingState({ label, compact = false }: { label: string; compact?: boo
 function buildQuickActions(result: ExecutionResult | null): string[] {
   const prompts = [
     "Explain this response",
-    "Why did I get this status code?",
-    "Show me how to handle this in JavaScript",
-    "What does this response body mean?"
+    "Why this status code?",
+    "Handle in JavaScript",
+    "What does the body mean?"
   ];
 
   if (result && result.status >= 400) {
-    prompts.push("How do I fix this error?");
+    prompts.push("How to fix this error?");
   }
 
   return prompts;

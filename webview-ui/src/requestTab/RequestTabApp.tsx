@@ -586,13 +586,16 @@ export default function RequestTabApp(): JSX.Element {
         </div>
       ) : null}
 
-      <div className="border-b border-vscode-panelBorder bg-vscode-card px-3 py-1.5 text-xs text-vscode-muted">
+      <div
+        className="flex items-center gap-1.5 border-b border-vscode-panelBorder px-3 py-1 text-[11px] text-vscode-descriptionFg"
+        style={{ background: "var(--vscode-editorWidget-background)" }}
+      >
         <span className="font-medium text-vscode-editorFg">{endpoint?.name ?? "No endpoint selected"}</span>
-        <span className="mx-2">•</span>
+        <span className="mx-0.5 inline-block h-3 w-px shrink-0" style={{ background: "var(--vscode-panelSection-border, rgba(128,128,128,0.25))" }} aria-hidden="true" />
         <span>{collectionSubtitle}</span>
         {Object.keys(environment).length > 0 ? (
           <>
-            <span className="mx-2">•</span>
+            <span className="mx-0.5 inline-block h-3 w-px shrink-0" style={{ background: "var(--vscode-panelSection-border, rgba(128,128,128,0.25))" }} aria-hidden="true" />
             <span>{Object.keys(environment).length} env vars</span>
           </>
         ) : null}
@@ -637,14 +640,21 @@ export default function RequestTabApp(): JSX.Element {
             }}
             onMouseEnter={() => setIsSplitHandleHovered(true)}
             onMouseLeave={() => setIsSplitHandleHovered(false)}
-            className="w-1 cursor-col-resize"
+            className="relative w-px cursor-col-resize"
             style={{
-              backgroundColor:
-                isSplitHandleHovered || isResizingSplit
-                  ? "var(--vscode-focusBorder)"
-                  : "var(--vscode-sideBar-border, var(--vscode-panel-border))"
+              backgroundColor: "var(--vscode-sideBar-border, var(--vscode-panel-border))"
             }}
-          />
+          >
+            <div
+              className="absolute inset-y-0 -left-[2px] w-[5px] transition-colors"
+              style={{
+                backgroundColor:
+                  isSplitHandleHovered || isResizingSplit
+                    ? "var(--vscode-focusBorder)"
+                    : "transparent"
+              }}
+            />
+          </div>
         ) : null}
 
         <div className="min-h-0 min-w-[300px] flex-1 overflow-hidden">
