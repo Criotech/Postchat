@@ -509,14 +509,9 @@ export function EndpointSidebar({
                             {endpoint.method}
                           </span>
 
-                          <div className="min-w-0 flex-1 overflow-hidden">
-                            <div className="truncate text-xs font-medium text-vscode-editorFg">
-                              {endpoint.name}
-                            </div>
-                            <div className="truncate font-mono text-[11px] text-vscode-descriptionFg">
-                              {endpoint.path}
-                            </div>
-                          </div>
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium text-vscode-editorFg">
+                            {endpoint.name}
+                          </span>
 
                           {/* Status icon */}
                           {hasError ? (
