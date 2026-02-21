@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback } from "react";
 import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedEndpoint } from "../../types/spec";
+import { vscode } from "../../vscode";
 import type { ExecutionResult } from "../RequestResult";
-import { ResponseViewer } from "./ResponseViewer";
 
 type FloatingActionBarProps = {
   endpoint: ParsedEndpoint;
@@ -52,13 +52,10 @@ export function FloatingActionBar({
   actionsEnabled = true
 }: FloatingActionBarProps): JSX.Element {
   const { emit } = useBridge();
-  const [showFullResponse, setShowFullResponse] = useState(false);
 
-  useEffect(() => {
-    if (!runResult) {
-      setShowFullResponse(false);
-    }
-  }, [runResult]);
+  const openInTab = useCallback(() => {
+    vscode.postMessage({ command: "openRequestTab", endpointId: endpoint.id });
+  }, [endpoint.id]);
 
   return (
     <div
@@ -68,16 +65,8 @@ export function FloatingActionBar({
         borderTop: "1px solid var(--vscode-widget-border)"
       }}
     >
-      {runResult && showFullResponse ? (
-        <div className="max-h-[45vh] overflow-auto border-b border-vscode-panelBorder px-3 py-2">
-          <ResponseViewer result={runResult} error={runError} requestName={endpoint.name} />
-        </div>
-      ) : null}
-
       {runError && !runResult ? (
-        <div className="border-b border-vscode-panelBorder px-3 py-2">
-          <ResponseViewer result={null} error={runError} requestName={endpoint.name} />
-        </div>
+        <div className="border-b border-vscode-panelBorder px-3 py-2 text-xs text-red-300">{runError}</div>
       ) : null}
 
       {methodFilters ? (
@@ -140,6 +129,14 @@ export function FloatingActionBar({
               </button>
               <button
                 type="button"
+                onClick={openInTab}
+                className="rounded bg-vscode-buttonSecondaryBg px-2.5 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+                title="Open endpoint in tab"
+              >
+                {compact ? "↗" : "Open in Tab"}
+              </button>
+              <button
+                type="button"
                 disabled={!actionsEnabled}
                 onClick={() => {
                   emit({ type: "askAboutEndpoint", endpoint });
@@ -164,10 +161,11 @@ export function FloatingActionBar({
               <span className="text-xs text-vscode-descriptionFg">{runResult.durationMs}ms</span>
               <button
                 type="button"
-                onClick={() => setShowFullResponse((prev) => !prev)}
+                onClick={openInTab}
                 className="rounded bg-vscode-buttonSecondaryBg px-2.5 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+                title="Open endpoint in tab"
               >
-                {showFullResponse ? "Hide Response" : "View Full Response"}
+                {compact ? "↗" : "Open in Tab"}
               </button>
               <button
                 type="button"
@@ -177,7 +175,7 @@ export function FloatingActionBar({
                 }}
                 className="rounded bg-vscode-buttonBg px-2.5 py-1 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover"
               >
-                {compact ? "💬" : "Ask AI"}
+                {compact ? "💬" : "💬 Ask AI"}
               </button>
               <button
                 type="button"

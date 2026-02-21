@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { ExecutionResult } from "../RequestResult";
 import type { ParsedEndpoint } from "../../types/spec";
+import { vscode } from "../../vscode";
 
 type EndpointSidebarProps = {
   endpoints: ParsedEndpoint[];
   selectedId: string | null;
-  selectedEndpoint: ParsedEndpoint | null;
   onSelect: (endpoint: ParsedEndpoint) => void;
+  onOpenRequestTab: (endpoint: ParsedEndpoint) => void;
   onRunRequest: (
     endpoint: ParsedEndpoint
   ) => Promise<ExecutionResult | null> | ExecutionResult | null | void;
@@ -17,11 +18,14 @@ type EndpointSidebarProps = {
   clearSearchSignal?: number;
   onSearchQueryChange?: (query: string) => void;
   onEscapeNoSearch?: () => void;
+  recentlyOpened: ParsedEndpoint[];
+  onReopenRecent: (endpoint: ParsedEndpoint) => void;
 };
 
 type MethodFilter = "ALL" | "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 const METHOD_FILTERS: MethodFilter[] = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"];
+const OPEN_HINT_STORAGE_KEY = "postchat.explorer.doubleClickHintDismissed";
 
 const METHOD_BADGE_STYLES: Record<ParsedEndpoint["method"], string> = {
   GET: "bg-blue-600/20 text-blue-400 border border-blue-600/30",
@@ -48,11 +52,27 @@ function groupByFolder(endpoints: ParsedEndpoint[]): Array<[string, ParsedEndpoi
   return Array.from(grouped.entries());
 }
 
+function readHintDismissed(): boolean {
+  try {
+    return window.localStorage.getItem(OPEN_HINT_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeHintDismissed(): void {
+  try {
+    window.localStorage.setItem(OPEN_HINT_STORAGE_KEY, "1");
+  } catch {
+    // Ignore storage failures in restricted environments.
+  }
+}
+
 export function EndpointSidebar({
   endpoints,
   selectedId,
-  selectedEndpoint,
   onSelect,
+  onOpenRequestTab,
   onRunRequest,
   runResults,
   runErrors,
@@ -60,11 +80,16 @@ export function EndpointSidebar({
   focusSearchSignal = 0,
   clearSearchSignal = 0,
   onSearchQueryChange,
-  onEscapeNoSearch
+  onEscapeNoSearch,
+  recentlyOpened,
+  onReopenRecent
 }: EndpointSidebarProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMethods, setActiveMethods] = useState<Set<MethodFilter>>(() => new Set(["ALL"]));
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [showDoubleClickHint, setShowDoubleClickHint] = useState<boolean>(() => !readHintDismissed());
+  const [recentCollapsed, setRecentCollapsed] = useState(true);
+
   const rowRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -74,7 +99,9 @@ export function EndpointSidebar({
     return endpoints.filter((endpoint) => {
       const matchesMethod =
         activeMethods.has("ALL") ||
-        (activeMethods.has(endpoint.method as MethodFilter) && endpoint.method !== "HEAD" && endpoint.method !== "OPTIONS");
+        (activeMethods.has(endpoint.method as MethodFilter) &&
+          endpoint.method !== "HEAD" &&
+          endpoint.method !== "OPTIONS");
 
       if (!matchesMethod) {
         return false;
@@ -90,6 +117,10 @@ export function EndpointSidebar({
   }, [activeMethods, endpoints, normalizedSearch]);
 
   const groupedEndpoints = useMemo(() => groupByFolder(filteredEndpoints), [filteredEndpoints]);
+  const selectedEndpoint = useMemo(
+    () => endpoints.find((endpoint) => endpoint.id === selectedId) ?? null,
+    [endpoints, selectedId]
+  );
 
   useEffect(() => {
     setCollapsedFolders((prev) => {
@@ -175,6 +206,29 @@ export function EndpointSidebar({
     setSearchQuery("");
     setActiveMethods(new Set(["ALL"]));
   }, []);
+
+  const dismissDoubleClickHint = useCallback(() => {
+    setShowDoubleClickHint(false);
+    writeHintDismissed();
+  }, []);
+
+  const handleEndpointDoubleClick = useCallback(
+    (endpoint: ParsedEndpoint) => {
+      dismissDoubleClickHint();
+      vscode.postMessage({ command: "openRequestTab", endpointId: endpoint.id });
+      onOpenRequestTab(endpoint);
+    },
+    [dismissDoubleClickHint, onOpenRequestTab]
+  );
+
+  const handleRecentReopen = useCallback(
+    (endpoint: ParsedEndpoint) => {
+      onSelect(endpoint);
+      vscode.postMessage({ command: "openRequestTab", endpointId: endpoint.id });
+      onReopenRecent(endpoint);
+    },
+    [onReopenRecent, onSelect]
+  );
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -286,6 +340,12 @@ export function EndpointSidebar({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
+        {showDoubleClickHint ? (
+          <div className="mb-2 rounded border border-vscode-focusBorder bg-vscode-editorWidget-background px-2 py-1.5 text-xs text-vscode-descriptionFg">
+            Double-click any endpoint to open it as a tab
+          </div>
+        ) : null}
+
         {groupedEndpoints.length === 0 ? (
           <div className="px-2 py-3">
             <p className="text-sm text-vscode-descriptionFg">
@@ -344,6 +404,7 @@ export function EndpointSidebar({
                           rowRefs.current[endpoint.id] = node;
                         }}
                         onClick={() => onSelect(endpoint)}
+                        onDoubleClick={() => handleEndpointDoubleClick(endpoint)}
                         className={[
                           "group relative cursor-pointer px-2 py-1.5",
                           pulsing ? "postchat-endpoint-pulse" : ""
@@ -407,6 +468,74 @@ export function EndpointSidebar({
             </section>
           );
         })}
+
+        <section className="mt-2 overflow-hidden rounded border border-vscode-panelBorder">
+          <button
+            type="button"
+            onClick={() => setRecentCollapsed((prev) => !prev)}
+            className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
+          >
+            <span
+              className={[
+                "inline-block text-vscode-descriptionFg transition-transform duration-150",
+                recentCollapsed ? "rotate-0" : "rotate-90"
+              ].join(" ")}
+              aria-hidden="true"
+            >
+              ▶
+            </span>
+            <span className="truncate text-vscode-editorFg">Recently Opened</span>
+            <span className="ml-auto rounded bg-vscode-badgeBg px-1.5 py-0.5 text-[10px] text-vscode-badgeFg">
+              {recentlyOpened.length}
+            </span>
+          </button>
+
+          {!recentCollapsed ? (
+            recentlyOpened.length > 0 ? (
+              <ul className="divide-y divide-vscode-panelBorder">
+                {recentlyOpened.map((endpoint) => (
+                  <li
+                    key={`recent-${endpoint.id}`}
+                    onClick={() => handleRecentReopen(endpoint)}
+                    className="group relative cursor-pointer px-2 py-1.5"
+                  >
+                    <div
+                      className="absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100"
+                      style={{ background: "var(--vscode-list-hoverBackground)" }}
+                      aria-hidden="true"
+                    />
+
+                    <div className="relative z-10 flex items-center gap-2">
+                      <span
+                        className={[
+                          "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                          METHOD_BADGE_STYLES[endpoint.method]
+                        ].join(" ")}
+                      >
+                        {endpoint.method}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-vscode-editorFg">{endpoint.name}</span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleRecentReopen(endpoint);
+                        }}
+                        className="rounded px-1 text-[11px] text-vscode-descriptionFg hover:bg-vscode-buttonBg hover:text-vscode-buttonFg"
+                        title="Re-open tab"
+                        aria-label={`Re-open ${endpoint.name}`}
+                      >
+                        ↗
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="px-2 py-2 text-xs text-vscode-descriptionFg">No tabs opened yet.</p>
+            )
+          ) : null}
+        </section>
       </div>
 
       <div className="border-t border-vscode-panelBorder px-2 py-1 text-[11px] text-vscode-descriptionFg">

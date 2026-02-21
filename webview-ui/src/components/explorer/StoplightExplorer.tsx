@@ -6,6 +6,7 @@ import type { ExecutionResult } from "../RequestResult";
 import { useBridgeListener } from "../../hooks/useBridgeListener";
 import { useBridge } from "../../lib/explorerBridge";
 import type { ParsedCollection, ParsedEndpoint, SpecType } from "../../types/spec";
+import { vscode } from "../../vscode";
 import { CollectionSummary } from "./CollectionSummary";
 import { FloatingActionBar } from "./FloatingActionBar";
 
@@ -47,6 +48,26 @@ function isEditableTarget(target: EventTarget | null): boolean {
   }
 
   return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
+function containsHttpMethodLabel(value: string): boolean {
+  return /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/i.test(value);
+}
+
+function findMethodFallbackOperationElement(target: Element): Element | null {
+  let current: Element | null = target;
+  let depth = 0;
+
+  while (current && depth < 6) {
+    const text = current.textContent ?? "";
+    if (containsHttpMethodLabel(text)) {
+      return current;
+    }
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  return null;
 }
 
 export function StoplightExplorer({
@@ -202,6 +223,33 @@ export function StoplightExplorer({
       window.removeEventListener("hashchange", handleHashChange);
     };
   }, [handleHashChange]);
+
+  useEffect(() => {
+    const containerNode = containerRef.current;
+    if (!containerNode) {
+      return;
+    }
+
+    const handleOperationDoubleClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const operationEl =
+        target.closest('[data-test="operation"]') ?? target.closest(".sl-operation");
+      const fallbackOperationEl = findMethodFallbackOperationElement(target);
+
+      if ((operationEl || fallbackOperationEl) && selectedOperation) {
+        vscode.postMessage({ command: "openRequestTab", endpointId: selectedOperation.id });
+      }
+    };
+
+    containerNode.addEventListener("dblclick", handleOperationDoubleClick);
+    return () => {
+      containerNode.removeEventListener("dblclick", handleOperationDoubleClick);
+    };
+  }, [selectedOperation]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

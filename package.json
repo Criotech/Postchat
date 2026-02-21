@@ -12,6 +12,7 @@
   ],
   "activationEvents": [
     "onCommand:postchat.start",
+    "onCommand:postchat.openRequestTab",
     "onView:postchatView"
   ],
   "main": "./out/extension.js",
@@ -20,6 +21,10 @@
       {
         "command": "postchat.start",
         "title": "Postchat: Start"
+      },
+      {
+        "command": "postchat.openRequestTab",
+        "title": "Postchat: Open Request Tab"
       }
     ],
     "configuration": {

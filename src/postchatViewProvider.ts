@@ -21,6 +21,7 @@ import { filterCollectionMarkdown } from "./collectionFilter";
 import { findRequestByKeyword } from "./collectionLookup";
 import { generateSuggestions } from "./promptSuggester";
 import { executeRequest, type ExecutableRequest } from "./requestExecutor";
+import { RequestTabProvider } from "./requestTabProvider";
 import { scanForSecrets } from "./secretScanner";
 
 type ConversationTurn = {
@@ -31,10 +32,12 @@ type ConversationTurn = {
 type LoadedSpecType = Exclude<SpecType, "unknown">;
 const UNRECOGNIZED_SPEC_ERROR =
   "Unrecognized file format. Please select a Postman Collection (.json) or an OpenAPI/Swagger specification (.yaml, .yml, .json).";
+const ENVIRONMENT_STATE_KEY = "postchat.environmentVariables";
 
 type IncomingWebviewMessage =
   | { command: "loadCollection" }
   | { command: "loadEnvironment" }
+  | { command: "openRequestTab"; endpointId: string }
   | { command: "getCollectionData" }
   | { command: "sendMessage"; text?: string }
   | { command: "runRequest"; requestName?: string }
@@ -64,7 +67,18 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private hasSecretSendApproval = false;
   private pendingConfirmedMessage: string | null = null;
 
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly requestTabProvider: RequestTabProvider,
+    private readonly context: vscode.ExtensionContext
+  ) {
+    this.environmentVariables =
+      this.context.workspaceState.get<Record<string, string>>(ENVIRONMENT_STATE_KEY) ?? null;
+  }
+
+  public getResolvedParsedCollection(): ParsedCollection | null {
+    return this.resolvedParsedCollection;
+  }
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
@@ -211,6 +225,9 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "loadEnvironment":
         await this.handleLoadEnvironment();
         break;
+      case "openRequestTab":
+        this.handleOpenRequestTab(message.endpointId);
+        break;
       case "getCollectionData":
         this.postToWebview({
           command: "collectionData",
@@ -329,6 +346,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
       const parsedEnvironment = parseEnvironment(selectedPath);
       this.environmentVariables = parsedEnvironment;
+      void this.context.workspaceState.update(ENVIRONMENT_STATE_KEY, parsedEnvironment);
       const environmentName = path.basename(selectedPath);
 
       if (this.collectionFilePath) {
@@ -356,6 +374,23 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       }
       this.postAssistantMessage(`Could not load environment: ${message}`);
     }
+  }
+
+  private handleOpenRequestTab(endpointIdRaw: string): void {
+    const endpointId = endpointIdRaw.trim();
+    if (!endpointId) {
+      return;
+    }
+
+    const endpoint = this.resolvedParsedCollection?.endpoints.find((item) => item.id === endpointId);
+    if (!endpoint) {
+      this.postError(
+        `Unable to open request tab. Endpoint "${endpointId}" was not found in the active collection.`
+      );
+      return;
+    }
+
+    this.requestTabProvider.openRequestTab(endpoint);
   }
 
   private async handleSendMessage(userMessageRaw: string): Promise<void> {

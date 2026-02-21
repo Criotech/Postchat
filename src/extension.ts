@@ -1,18 +1,57 @@
 import * as vscode from "vscode";
+import { getProvider } from "./llmClient";
 import { PostchatViewProvider } from "./postchatViewProvider";
+import { RequestTabProvider } from "./requestTabProvider";
+import type { ParsedEndpoint } from "./specParser";
+
+function isParsedEndpoint(value: unknown): value is ParsedEndpoint {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const endpoint = value as Partial<ParsedEndpoint>;
+  return (
+    typeof endpoint.id === "string" &&
+    typeof endpoint.name === "string" &&
+    typeof endpoint.method === "string" &&
+    typeof endpoint.url === "string" &&
+    typeof endpoint.path === "string"
+  );
+}
 
 export function activate(context: vscode.ExtensionContext): void {
-  const provider = new PostchatViewProvider(context.extensionUri);
+  const llmClient = getProvider(vscode.workspace.getConfiguration("postchat"));
+  let viewProvider: PostchatViewProvider | undefined;
+  const requestTabProvider = new RequestTabProvider(
+    context,
+    () => viewProvider?.getResolvedParsedCollection() ?? null,
+    llmClient
+  );
+  viewProvider = new PostchatViewProvider(context.extensionUri, requestTabProvider, context);
 
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(PostchatViewProvider.viewType, provider)
+    vscode.window.registerWebviewViewProvider(PostchatViewProvider.viewType, viewProvider)
   );
 
   const startCommand = vscode.commands.registerCommand("postchat.start", () => {
     vscode.window.showInformationMessage("Postchat started.");
   });
 
-  context.subscriptions.push(startCommand);
+  const openRequestTabCommand = vscode.commands.registerCommand(
+    "postchat.openRequestTab",
+    (endpoint: unknown) => {
+      if (!isParsedEndpoint(endpoint)) {
+        return;
+      }
+      requestTabProvider.openRequestTab(endpoint);
+    }
+  );
+
+  context.subscriptions.push(
+    startCommand,
+    openRequestTabCommand,
+    { dispose: () => requestTabProvider.closeAllTabs() }
+  );
 }
 
 export function deactivate(): void {

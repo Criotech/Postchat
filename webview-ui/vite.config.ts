@@ -14,12 +14,16 @@ export default defineConfig({
     commonjsOptions: {
       transformMixedEsModules: true
     },
-    cssCodeSplit: false,
+    cssCodeSplit: true,
     rollupOptions: {
+      input: {
+        sidebar: "index.html",
+        requestTab: "request-tab.html"
+      },
       output: {
-        entryFileNames: "assets/index.js",
-        chunkFileNames: "assets/[name]-[hash].js",
-        assetFileNames: "assets/[name][extname]"
+        entryFileNames: "[name]/[name].js",
+        chunkFileNames: "[name]/chunks/[name].js",
+        assetFileNames: "[name]/assets/[name][extname]"
       }
     }
   }
