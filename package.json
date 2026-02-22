@@ -3,7 +3,7 @@
   "displayName": "Postchat",
   "description": "Sidebar chat for Postman Collection Q&A.",
   "version": "0.0.1",
-  "publisher": "postchat",
+  "publisher": "opeoluwasiyanbola",
   "engines": {
     "vscode": "^1.85.0"
   },
