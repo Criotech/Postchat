@@ -640,28 +640,13 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    let active = this.getActiveCollection();
+    const active = this.getActiveCollection();
     if (!active) {
       this.postAssistantMessage(
         "Please load a Postman collection or OpenAPI/Swagger specification first, then ask your question."
       );
       return;
     }
-
-    try {
-      active = await this.refreshCollectionFromDisk(activeCollectionId);
-      if (!active) {
-        this.postAssistantMessage("Could not parse specification: active collection is unavailable.");
-        return;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.postAssistantMessage(`Could not parse specification: ${message}`);
-      return;
-    }
-
-    this.ensureSelectedEndpointIsValid();
-    this.postActiveCollectionData();
 
     // if (!this.hasSecretSendApproval) {
     //   const findings = scanForSecrets(active.resolvedMarkdown);

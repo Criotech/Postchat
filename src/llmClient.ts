@@ -6,6 +6,13 @@ export const ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929";
 export const OPENAI_MODEL = "gpt-4o";
 export const MAX_TOKENS = 4096;
 
+// ── Token budget constants ───────────────────────────────────────────────────
+// 1 token ≈ 4 characters (standard heuristic)
+const CHARS_PER_TOKEN = 4;
+const MAX_INPUT_TOKENS = 150_000;
+const SYSTEM_PROMPT_BUDGET = 40_000;
+const HISTORY_BUDGET = MAX_INPUT_TOKENS - SYSTEM_PROMPT_BUDGET;
+
 // Backward-compat alias used by promptSuggester.ts
 export const MODEL_NAME = ANTHROPIC_MODEL;
 
@@ -37,8 +44,10 @@ class AnthropicProvider implements LlmProvider {
   async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
     const client = new Anthropic({ apiKey: this.apiKey });
 
+    const trimmedPrompt = truncateSystemPrompt(systemPrompt);
+    const trimmedHistory = truncateHistory(history, userMessage);
     const messages = [
-      ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+      ...trimmedHistory.map((turn) => ({ role: turn.role, content: turn.content })),
       { role: "user" as const, content: userMessage }
     ];
 
@@ -46,7 +55,7 @@ class AnthropicProvider implements LlmProvider {
       const response = await client.messages.create({
         model: this.modelName,
         max_tokens: MAX_TOKENS,
-        system: systemPrompt,
+        system: trimmedPrompt,
         messages
       });
 
@@ -100,9 +109,11 @@ class OpenAiProvider implements LlmProvider {
   async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
     const client = new OpenAI({ apiKey: this.apiKey });
 
+    const trimmedPrompt = truncateSystemPrompt(systemPrompt);
+    const trimmedHistory = truncateHistory(history, userMessage);
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-      { role: "system", content: systemPrompt },
-      ...history.map((turn) => ({
+      { role: "system", content: trimmedPrompt },
+      ...trimmedHistory.map((turn) => ({
         role: turn.role as "user" | "assistant",
         content: turn.content
       })),
@@ -162,9 +173,11 @@ class OllamaProvider implements LlmProvider {
   }
 
   async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
+    const trimmedPrompt = truncateSystemPrompt(systemPrompt);
+    const trimmedHistory = truncateHistory(history, userMessage);
     const messages = [
-      { role: "system", content: systemPrompt },
-      ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+      { role: "system", content: trimmedPrompt },
+      ...trimmedHistory.map((turn) => ({ role: turn.role, content: turn.content })),
       { role: "user", content: userMessage }
     ];
 
@@ -242,6 +255,48 @@ Rules:
 API documentation for reference:
 
 ${collectionMarkdown}`;
+}
+
+// ── Truncation helpers ────────────────────────────────────────────────────────
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+/**
+ * Keep the most recent messages that fit within the history token budget.
+ * Drops oldest messages first to preserve conversation continuity.
+ */
+function truncateHistory(history: Message[], userMessage: string): Message[] {
+  const userMessageTokens = estimateTokens(userMessage);
+  let budget = HISTORY_BUDGET - userMessageTokens;
+  if (budget <= 0) {
+    return [];
+  }
+
+  const trimmed: Message[] = [];
+  // Walk from newest to oldest, accumulating until budget is exhausted
+  for (let i = history.length - 1; i >= 0; i--) {
+    const cost = estimateTokens(history[i].content);
+    if (cost > budget) {
+      break;
+    }
+    budget -= cost;
+    trimmed.unshift(history[i]);
+  }
+  return trimmed;
+}
+
+/**
+ * If the system prompt exceeds its budget, truncate the collection markdown
+ * portion and append a warning note.
+ */
+function truncateSystemPrompt(prompt: string): string {
+  const maxChars = SYSTEM_PROMPT_BUDGET * CHARS_PER_TOKEN;
+  if (prompt.length <= maxChars) {
+    return prompt;
+  }
+  return prompt.slice(0, maxChars) + "\n\n[...documentation truncated due to size limits]";
 }
 
 // ── Network helper ────────────────────────────────────────────────────────────

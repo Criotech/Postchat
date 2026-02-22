@@ -22,6 +22,8 @@ type RequestTabMessage =
 
 export class RequestTabProvider {
   private openTabs: Map<string, vscode.WebviewPanel> = new Map();
+  private cachedCollection: ParsedCollection | null = null;
+  private cachedMarkdown: string | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -140,6 +142,8 @@ export class RequestTabProvider {
   }
 
   notifyCollectionReloaded(): void {
+    this.cachedCollection = null;
+    this.cachedMarkdown = null;
     for (const panel of this.openTabs.values()) {
       void panel.webview.postMessage({ command: "collectionReloaded" });
     }
@@ -210,7 +214,16 @@ export class RequestTabProvider {
     }
 
     const collection = this.getCollection();
-    const collectionMarkdown = collection ? collectionToMarkdown(collection) : "No collection loaded.";
+    let collectionMarkdown: string;
+    if (collection && collection === this.cachedCollection && this.cachedMarkdown) {
+      collectionMarkdown = this.cachedMarkdown;
+    } else if (collection) {
+      collectionMarkdown = collectionToMarkdown(collection);
+      this.cachedCollection = collection;
+      this.cachedMarkdown = collectionMarkdown;
+    } else {
+      collectionMarkdown = "No collection loaded.";
+    }
     const filteredCollection = filterCollectionMarkdown(collectionMarkdown, userPrompt);
     const endpointContext = this.buildEndpointContext(endpoint);
     const systemPrompt = buildSystemPrompt(
