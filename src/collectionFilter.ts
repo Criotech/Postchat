@@ -8,7 +8,24 @@ const STOP_WORDS = new Set([
   "please", "help", "need", "want", "like", "example", "all", "any"
 ]);
 
-const MAX_ENDPOINTS_IN_CONTEXT = 30;
+const MAX_ENDPOINTS_IN_CONTEXT = 15;
+
+const FOLLOW_UP_PATTERNS = new Set([
+  "yes", "no", "ok", "okay", "sure", "thanks", "thank you", "ty",
+  "go on", "continue", "explain more", "more", "why", "how",
+  "got it", "i see", "right", "correct", "exactly", "yep", "nope",
+  "please", "do it", "go ahead", "sounds good", "great", "nice",
+  "what else", "anything else", "next", "and"
+]);
+
+function isFollowUp(query: string): boolean {
+  const trimmed = query.trim().toLowerCase().replace(/[?.!,]+$/g, "");
+  if (FOLLOW_UP_PATTERNS.has(trimmed)) {
+    return true;
+  }
+  const wordCount = trimmed.split(/\s+/).length;
+  return wordCount <= 3;
+}
 
 function extractKeywords(query: string): string[] {
   return query
@@ -41,14 +58,21 @@ function scoreBlock(block: string, keywords: string[]): number {
  * back to an evenly-sampled set so the LLM still has a representative view.
  */
 export function filterCollectionMarkdown(markdown: string, userQuery: string): string {
-  const keywords = extractKeywords(userQuery);
   const endpointHeaderPattern = /^### (?:\[[A-Z]+]|[A-Z]+) /m;
 
   // Split into header (before first ###) and endpoint blocks
   const match = endpointHeaderPattern.exec(markdown);
   const firstBlockIndex = match?.index ?? -1;
   const header = firstBlockIndex > 0 ? markdown.slice(0, firstBlockIndex).trim() : "";
+
+  // For follow-up messages, return only the collection header (title, base URL)
+  // — the LLM has enough context from conversation history
+  if (isFollowUp(userQuery)) {
+    return header || markdown;
+  }
+
   const blockSection = firstBlockIndex >= 0 ? markdown.slice(firstBlockIndex) : markdown;
+  const keywords = extractKeywords(userQuery);
 
   const blocks = blockSection
     .split(/(?=^### (?:\[[A-Z]+]|[A-Z]+) )/m)

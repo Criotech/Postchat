@@ -6,6 +6,13 @@ export const ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929";
 export const OPENAI_MODEL = "gpt-4o";
 export const MAX_TOKENS = 4096;
 
+// ── Token budget constants ───────────────────────────────────────────────────
+// 1 token ≈ 4 characters (standard heuristic)
+const CHARS_PER_TOKEN = 4;
+const MAX_INPUT_TOKENS = 150_000;
+const SYSTEM_PROMPT_BUDGET = 40_000;
+const HISTORY_BUDGET = MAX_INPUT_TOKENS - SYSTEM_PROMPT_BUDGET;
+
 // Backward-compat alias used by promptSuggester.ts
 export const MODEL_NAME = ANTHROPIC_MODEL;
 
@@ -20,9 +27,15 @@ type SendMessageParams = {
   userMessage: string;
 };
 
+export type SendMessageResult = {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+};
+
 export interface LlmProvider {
   readonly modelName: string;
-  sendMessage(params: SendMessageParams): Promise<string>;
+  sendMessage(params: SendMessageParams): Promise<SendMessageResult>;
 }
 
 // ── Anthropic ─────────────────────────────────────────────────────────────────
@@ -34,11 +47,17 @@ class AnthropicProvider implements LlmProvider {
     this.modelName = model;
   }
 
-  async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
+  async sendMessage({
+    systemPrompt,
+    history,
+    userMessage
+  }: SendMessageParams): Promise<SendMessageResult> {
     const client = new Anthropic({ apiKey: this.apiKey });
 
+    const trimmedPrompt = truncateSystemPrompt(systemPrompt);
+    const trimmedHistory = truncateHistory(history, userMessage);
     const messages = [
-      ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+      ...trimmedHistory.map((turn) => ({ role: turn.role, content: turn.content })),
       { role: "user" as const, content: userMessage }
     ];
 
@@ -46,7 +65,7 @@ class AnthropicProvider implements LlmProvider {
       const response = await client.messages.create({
         model: this.modelName,
         max_tokens: MAX_TOKENS,
-        system: systemPrompt,
+        system: trimmedPrompt,
         messages
       });
 
@@ -60,7 +79,11 @@ class AnthropicProvider implements LlmProvider {
         throw new Error("LLM returned an empty response.");
       }
 
-      return text;
+      return {
+        text,
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0
+      };
     } catch (error: unknown) {
       const status =
         typeof error === "object" && error !== null && "status" in error
@@ -97,12 +120,18 @@ class OpenAiProvider implements LlmProvider {
     this.modelName = model;
   }
 
-  async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
+  async sendMessage({
+    systemPrompt,
+    history,
+    userMessage
+  }: SendMessageParams): Promise<SendMessageResult> {
     const client = new OpenAI({ apiKey: this.apiKey });
 
+    const trimmedPrompt = truncateSystemPrompt(systemPrompt);
+    const trimmedHistory = truncateHistory(history, userMessage);
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-      { role: "system", content: systemPrompt },
-      ...history.map((turn) => ({
+      { role: "system", content: trimmedPrompt },
+      ...trimmedHistory.map((turn) => ({
         role: turn.role as "user" | "assistant",
         content: turn.content
       })),
@@ -122,7 +151,11 @@ class OpenAiProvider implements LlmProvider {
         throw new Error("OpenAI returned an empty response.");
       }
 
-      return text;
+      return {
+        text,
+        inputTokens: response.usage?.prompt_tokens ?? 0,
+        outputTokens: response.usage?.completion_tokens ?? 0
+      };
     } catch (error: unknown) {
       const status =
         typeof error === "object" && error !== null && "status" in error
@@ -161,10 +194,16 @@ class OllamaProvider implements LlmProvider {
     this.modelName = model;
   }
 
-  async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
+  async sendMessage({
+    systemPrompt,
+    history,
+    userMessage
+  }: SendMessageParams): Promise<SendMessageResult> {
+    const trimmedPrompt = truncateSystemPrompt(systemPrompt);
+    const trimmedHistory = truncateHistory(history, userMessage);
     const messages = [
-      { role: "system", content: systemPrompt },
-      ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+      { role: "system", content: trimmedPrompt },
+      ...trimmedHistory.map((turn) => ({ role: turn.role, content: turn.content })),
       { role: "user", content: userMessage }
     ];
 
@@ -179,14 +218,22 @@ class OllamaProvider implements LlmProvider {
         throw new Error(`Ollama server responded with status ${response.status}.`);
       }
 
-      const data = (await response.json()) as { message?: { content?: string } };
+      const data = (await response.json()) as {
+        message?: { content?: string };
+        prompt_eval_count?: number;
+        eval_count?: number;
+      };
       const text = data?.message?.content?.trim() ?? "";
 
       if (!text) {
         throw new Error("Ollama returned an empty response.");
       }
 
-      return text;
+      return {
+        text,
+        inputTokens: data.prompt_eval_count ?? 0,
+        outputTokens: data.eval_count ?? 0
+      };
     } catch (error: unknown) {
       if (isNetworkError(error)) {
         throw new Error(
@@ -242,6 +289,48 @@ Rules:
 API documentation for reference:
 
 ${collectionMarkdown}`;
+}
+
+// ── Truncation helpers ────────────────────────────────────────────────────────
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+/**
+ * Keep the most recent messages that fit within the history token budget.
+ * Drops oldest messages first to preserve conversation continuity.
+ */
+function truncateHistory(history: Message[], userMessage: string): Message[] {
+  const userMessageTokens = estimateTokens(userMessage);
+  let budget = HISTORY_BUDGET - userMessageTokens;
+  if (budget <= 0) {
+    return [];
+  }
+
+  const trimmed: Message[] = [];
+  // Walk from newest to oldest, accumulating until budget is exhausted
+  for (let i = history.length - 1; i >= 0; i--) {
+    const cost = estimateTokens(history[i].content);
+    if (cost > budget) {
+      break;
+    }
+    budget -= cost;
+    trimmed.unshift(history[i]);
+  }
+  return trimmed;
+}
+
+/**
+ * If the system prompt exceeds its budget, truncate the collection markdown
+ * portion and append a warning note.
+ */
+function truncateSystemPrompt(prompt: string): string {
+  const maxChars = SYSTEM_PROMPT_BUDGET * CHARS_PER_TOKEN;
+  if (prompt.length <= maxChars) {
+    return prompt;
+  }
+  return prompt.slice(0, maxChars) + "\n\n[...documentation truncated due to size limits]";
 }
 
 // ── Network helper ────────────────────────────────────────────────────────────
