@@ -11,11 +11,11 @@ import type { ParsedCollection, ParsedEndpoint, SpecType } from "./types/spec";
 import { vscode } from "./vscode";
 import type { Message } from "./types";
 
-type SecretFinding = {
-  field: string;
-  pattern: string;
-  preview: string;
-};
+// type SecretFinding = {
+//   field: string;
+//   pattern: string;
+//   preview: string;
+// };
 
 type AppTab = "chat" | "explorer";
 type CollectionSpecType = Extract<SpecType, "postman" | "openapi3" | "swagger2">;
@@ -83,7 +83,7 @@ type IncomingMessage =
       activeCollectionId?: string | null;
       collections?: CollectionSummary[];
     }
-  | { command: "secretsFound"; findings: SecretFinding[] }
+  // | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "showSuggestions"; suggestions: string[] }
   | { command: "clearChat" }
   | { command: "providerChanged"; provider: string; model: string }
@@ -357,9 +357,9 @@ function AppContent(): JSX.Element {
     ollamaModel: "llama3"
   });
   const [error, setError] = useState<string | undefined>();
-  const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([]);
-  const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
-  const [queuedMessage, setQueuedMessage] = useState<string | undefined>();
+  // const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([]);
+  // const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
+  // const [queuedMessage, setQueuedMessage] = useState<string | undefined>();
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
@@ -627,12 +627,12 @@ function AppContent(): JSX.Element {
           setIsCollectionParsing(false);
           clearParsingTimer();
           break;
-        case "secretsFound":
-          setSecretFindings(message.findings);
-          setIsSecretsModalOpen(true);
-          setIsThinking(false);
-          setError(undefined);
-          break;
+        // case "secretsFound":
+        //   setSecretFindings(message.findings);
+        //   setIsSecretsModalOpen(true);
+        //   setIsThinking(false);
+        //   setError(undefined);
+        //   break;
         case "showSuggestions":
           setSuggestions(message.suggestions);
           break;
@@ -655,9 +655,9 @@ function AppContent(): JSX.Element {
           setMessages([]);
           setError(undefined);
           setIsThinking(false);
-          setIsSecretsModalOpen(false);
-          setSecretFindings([]);
-          setQueuedMessage(undefined);
+          // setIsSecretsModalOpen(false);
+          // setSecretFindings([]);
+          // setQueuedMessage(undefined);
           setSuggestions([]);
           setHasSentFirstMessage(false);
           setPendingExecution(null);
@@ -928,21 +928,21 @@ function AppContent(): JSX.Element {
     [handleSend]
   );
 
-  const handleConfirmSend = useCallback(() => {
-    if (!queuedMessage) {
-      return;
-    }
-    setIsSecretsModalOpen(false);
-    setSecretFindings([]);
-    vscode.postMessage({ command: "confirmSend", originalMessage: queuedMessage });
-  }, [queuedMessage]);
+  // const handleConfirmSend = useCallback(() => {
+  //   if (!queuedMessage) {
+  //     return;
+  //   }
+  //   setIsSecretsModalOpen(false);
+  //   setSecretFindings([]);
+  //   vscode.postMessage({ command: "confirmSend", originalMessage: queuedMessage });
+  // }, [queuedMessage]);
 
-  const handleCancelSend = useCallback(() => {
-    setIsSecretsModalOpen(false);
-    setSecretFindings([]);
-    setQueuedMessage(undefined);
-    vscode.postMessage({ command: "cancelSend" });
-  }, []);
+  // const handleCancelSend = useCallback(() => {
+  //   setIsSecretsModalOpen(false);
+  //   setSecretFindings([]);
+  //   setQueuedMessage(undefined);
+  //   vscode.postMessage({ command: "cancelSend" });
+  // }, []);
 
   const handleSendToAiFromResponse = useCallback(
     (prompt: string) => {
@@ -999,10 +999,10 @@ function AppContent(): JSX.Element {
               programmaticInput={programmaticInput}
               programmaticSendRequest={programmaticSendRequest}
               onProgrammaticSendConsumed={() => setProgrammaticSendRequest(null)}
-              isSecretsModalOpen={isSecretsModalOpen}
-              secretFindings={secretFindings}
-              onConfirmSend={handleConfirmSend}
-              onCancelSend={handleCancelSend}
+              // isSecretsModalOpen={isSecretsModalOpen}
+              // secretFindings={secretFindings}
+              // onConfirmSend={handleConfirmSend}
+              // onCancelSend={handleCancelSend}
             />
           </div>
         ) : null}
