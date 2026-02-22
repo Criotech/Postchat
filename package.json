@@ -3,7 +3,7 @@
   "displayName": "Postchat",
   "description": "AI-powered API client in VS Code — chat with your Postman collections and OpenAPI specs, explore endpoints, and run requests without leaving the editor.",
   "version": "0.0.1",
-  "publisher": "opeoluwasiyanbola",
+  "publisher": "postchat",
   "icon": "media/icon.png",
   "license": "MIT",
   "repository": {
