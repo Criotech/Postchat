@@ -495,15 +495,12 @@ export default function RequestTabApp(): JSX.Element {
         : null;
 
       const contextualPrompt = [
-        "The user is working on the following API request and response. Help them understand and work with it.",
-        `User question: ${prompt}`,
+        `${prompt}`,
         "",
-        "Request context:",
+        "Context — current request:",
         JSON.stringify(requestContext, null, 2),
-        "",
-        "Response context:",
-        responseContext ? JSON.stringify(responseContext, null, 2) : "No response yet."
-      ].join("\n");
+        responseContext ? `\nContext — response:\n${JSON.stringify(responseContext, null, 2)}` : ""
+      ].filter(Boolean).join("\n");
 
       setIsAiLoading(true);
       setAiResponse(null);
@@ -548,7 +545,7 @@ export default function RequestTabApp(): JSX.Element {
         onMethodChange={handleMethodChange}
         onUrlChange={handleUrlChange}
         onSend={handleSend}
-        onAskAI={() => handleAskAi("Help me improve this request before sending it.")}
+        onAskAI={() => handleAskAi("Review this request. Flag any issues with headers, params, or body.")}
         onResetToOriginal={handleResetToOriginal}
         onCopySnippet={handleCopySnippet}
         onSaveToCollection={handleSaveToCollection}

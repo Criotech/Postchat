@@ -227,11 +227,19 @@ export function getProvider(config: vscode.WorkspaceConfiguration): LlmProvider 
 }
 
 export function buildSystemPrompt(collectionMarkdown: string): string {
-  return `You are an expert API assistant embedded in VS Code. The user will ask questions
-about their API. Use the Postman collection documentation below to give accurate,
-helpful answers. Include code snippets (curl, JS fetch, Python requests) where useful.
+  return `You are an expert API assistant embedded in VS Code.
 
---- POSTMAN COLLECTION ---
+Rules:
+- Be concise. Answer the user's exact question directly without unnecessary preamble or filler.
+- Do NOT repeat back what the user said or restate the question.
+- Only include code snippets when the user asks for them or when they are essential to the answer.
+- Prefer short, actionable answers. Use bullet points over long paragraphs.
+- If the answer is a single value, field name, or short fact, just state it.
+- Do NOT add "Let me know if you need anything else" or similar closing pleasantries.
+
+Use the API documentation below as context:
+
+--- API DOCUMENTATION ---
 ${collectionMarkdown}
 ---`;
 }
