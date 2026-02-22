@@ -14,10 +14,11 @@ import {
 } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ExecutionResult, RequestEditState } from "../types";
 import { bytesToKb } from "../utils";
+import { CodeBlock } from "../../components/CodeBlock";
 
 type ResponseTab = "body" | "headers" | "raw" | "ai";
 
@@ -400,33 +401,25 @@ export function ResponsePanel({
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {aiMessages.map((message, index) => (
-                        <div
+                        <article
                           key={`ai-${index}`}
                           className={[
-                            "rounded-lg px-3 py-2",
+                            "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
                             message.role === "user"
-                              ? ""
-                              : ""
+                              ? "ml-auto bg-vscode-buttonBg text-vscode-buttonFg"
+                              : "mr-auto border border-vscode-panelBorder bg-vscode-card text-vscode-editorFg"
                           ].join(" ")}
-                          style={
-                            message.role === "user"
-                              ? { background: "var(--vscode-editorWidget-background)" }
-                              : undefined
-                          }
                         >
-                          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-vscode-descriptionFg">
-                            {message.role === "user" ? "You" : "AI"}
-                          </p>
                           {message.role === "assistant" ? (
-                            <div className="prose prose-sm max-w-none text-xs text-vscode-editorFg">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                            </div>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={AI_MARKDOWN_COMPONENTS}>
+                              {message.content}
+                            </ReactMarkdown>
                           ) : (
-                            <p className="text-xs text-vscode-editorFg">{message.content}</p>
+                            <p className="whitespace-pre-wrap break-words">{message.content}</p>
                           )}
-                        </div>
+                        </article>
                       ))}
                       {isAiLoading ? <LoadingState label="Thinking..." compact /> : null}
                     </div>
@@ -472,6 +465,47 @@ export function ResponsePanel({
 }
 
 /* ── Subcomponents ── */
+
+const AI_MARKDOWN_COMPONENTS: Components = {
+  p(props) {
+    return <p className="my-2 whitespace-pre-wrap break-words" {...props} />;
+  },
+  ul(props) {
+    return <ul className="my-2 list-disc pl-5" {...props} />;
+  },
+  ol(props) {
+    return <ol className="my-2 list-decimal pl-5" {...props} />;
+  },
+  li(props) {
+    return <li className="my-1" {...props} />;
+  },
+  a(props) {
+    return (
+      <a
+        className="text-vscode-linkFg underline"
+        target="_blank"
+        rel="noreferrer"
+        {...props}
+      />
+    );
+  },
+  code({ className, children, ...props }) {
+    const isInline = Boolean("inline" in props && props.inline);
+    if (isInline) {
+      return (
+        <code className="rounded bg-vscode-inlineCodeBg px-1 py-0.5 text-xs" {...props}>
+          {children}
+        </code>
+      );
+    }
+
+    const match = /language-(\w+)/.exec(className ?? "");
+    const language = match?.[1] ?? "text";
+    const code = String(children ?? "").replace(/\n$/, "");
+
+    return <CodeBlock code={code} language={language} showSnippetToolbar />;
+  }
+};
 
 function StatusChip({ status, text }: { status: number; text: string }) {
   let colorClass = "bg-green-500/15 text-green-400 border-green-500/30";
