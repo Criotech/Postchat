@@ -27,9 +27,15 @@ type SendMessageParams = {
   userMessage: string;
 };
 
+export type SendMessageResult = {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+};
+
 export interface LlmProvider {
   readonly modelName: string;
-  sendMessage(params: SendMessageParams): Promise<string>;
+  sendMessage(params: SendMessageParams): Promise<SendMessageResult>;
 }
 
 // ── Anthropic ─────────────────────────────────────────────────────────────────
@@ -41,7 +47,11 @@ class AnthropicProvider implements LlmProvider {
     this.modelName = model;
   }
 
-  async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
+  async sendMessage({
+    systemPrompt,
+    history,
+    userMessage
+  }: SendMessageParams): Promise<SendMessageResult> {
     const client = new Anthropic({ apiKey: this.apiKey });
 
     const trimmedPrompt = truncateSystemPrompt(systemPrompt);
@@ -69,7 +79,11 @@ class AnthropicProvider implements LlmProvider {
         throw new Error("LLM returned an empty response.");
       }
 
-      return text;
+      return {
+        text,
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0
+      };
     } catch (error: unknown) {
       const status =
         typeof error === "object" && error !== null && "status" in error
@@ -106,7 +120,11 @@ class OpenAiProvider implements LlmProvider {
     this.modelName = model;
   }
 
-  async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
+  async sendMessage({
+    systemPrompt,
+    history,
+    userMessage
+  }: SendMessageParams): Promise<SendMessageResult> {
     const client = new OpenAI({ apiKey: this.apiKey });
 
     const trimmedPrompt = truncateSystemPrompt(systemPrompt);
@@ -133,7 +151,11 @@ class OpenAiProvider implements LlmProvider {
         throw new Error("OpenAI returned an empty response.");
       }
 
-      return text;
+      return {
+        text,
+        inputTokens: response.usage?.prompt_tokens ?? 0,
+        outputTokens: response.usage?.completion_tokens ?? 0
+      };
     } catch (error: unknown) {
       const status =
         typeof error === "object" && error !== null && "status" in error
@@ -172,7 +194,11 @@ class OllamaProvider implements LlmProvider {
     this.modelName = model;
   }
 
-  async sendMessage({ systemPrompt, history, userMessage }: SendMessageParams): Promise<string> {
+  async sendMessage({
+    systemPrompt,
+    history,
+    userMessage
+  }: SendMessageParams): Promise<SendMessageResult> {
     const trimmedPrompt = truncateSystemPrompt(systemPrompt);
     const trimmedHistory = truncateHistory(history, userMessage);
     const messages = [
@@ -192,14 +218,22 @@ class OllamaProvider implements LlmProvider {
         throw new Error(`Ollama server responded with status ${response.status}.`);
       }
 
-      const data = (await response.json()) as { message?: { content?: string } };
+      const data = (await response.json()) as {
+        message?: { content?: string };
+        prompt_eval_count?: number;
+        eval_count?: number;
+      };
       const text = data?.message?.content?.trim() ?? "";
 
       if (!text) {
         throw new Error("Ollama returned an empty response.");
       }
 
-      return text;
+      return {
+        text,
+        inputTokens: data.prompt_eval_count ?? 0,
+        outputTokens: data.eval_count ?? 0
+      };
     } catch (error: unknown) {
       if (isNetworkError(error)) {
         throw new Error(

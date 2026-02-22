@@ -22,6 +22,7 @@ import { findRequestByKeyword } from "./collectionLookup";
 import { generateSuggestions } from "./promptSuggester";
 import { executeRequest, type ExecutableRequest } from "./requestExecutor";
 import { RequestTabProvider } from "./requestTabProvider";
+import { TokenTracker } from "./tokenTracker";
 // import { scanForSecrets } from "./secretScanner";
 
 type ConversationTurn = {
@@ -53,6 +54,7 @@ type CollectionSummary = {
 const UNRECOGNIZED_SPEC_ERROR =
   "Unrecognized file format. Please select a Postman Collection (.json) or an OpenAPI/Swagger specification (.yaml, .yml, .json).";
 const MAX_LOADED_COLLECTIONS = 5;
+const ESTIMATED_CHARS_PER_TOKEN = 4;
 
 type IncomingWebviewMessage =
   | { command: "loadCollection" }
@@ -80,6 +82,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private collections: Map<string, LoadedCollectionState> = new Map();
   private activeCollectionId: string | null = null;
   private selectedExplorerEndpointId: string | null = null;
+  private readonly tokenTracker = new TokenTracker();
   // private hasSecretSendApproval = false;
   // private pendingConfirmedMessage: string | null = null;
 
@@ -130,6 +133,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     webview.onDidReceiveMessage(async (message: IncomingWebviewMessage) => {
       await this.handleWebviewMessage(message);
     });
+
+    this.postTokenUsage();
 
     // Send provider info and config whenever the view becomes visible
     webviewView.onDidChangeVisibility(() => {
@@ -403,7 +408,9 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "clearChat":
         this.conversationHistory = [];
+        this.tokenTracker.reset();
         this.postToWebview({ command: "clearChat" });
+        this.postTokenUsage();
         break;
       case "updateConfig":
         await this.handleUpdateConfig(message.key, message.value);
@@ -831,16 +838,32 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       const filteredMarkdown = filterCollectionMarkdown(active.markdown, userMessage);
       const systemPrompt = buildSystemPrompt(filteredMarkdown);
 
-      const assistantResponse = await provider.sendMessage({
+      const response = await provider.sendMessage({
         systemPrompt,
         history: this.conversationHistory,
         userMessage
       });
+      const assistantResponse = response.text;
+
+      let inputTokens = response.inputTokens;
+      let outputTokens = response.outputTokens;
+      if (providerType === "ollama" && (inputTokens <= 0 || outputTokens <= 0)) {
+        const estimatedInput = [
+          systemPrompt,
+          ...this.conversationHistory.map((turn) => turn.content),
+          userMessage
+        ].join("\n");
+        inputTokens = this.estimateTokens(estimatedInput);
+        outputTokens = this.estimateTokens(assistantResponse);
+      }
 
       this.conversationHistory.push(
         { role: "user", content: userMessage },
         { role: "assistant", content: assistantResponse }
       );
+
+      this.tokenTracker.addUsage(inputTokens, outputTokens, providerType, provider.modelName);
+      this.postTokenUsage();
 
       this.postToWebview({
         command: "addMessage",
@@ -873,6 +896,20 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
   private postToWebview(message: unknown): void {
     void this.view?.webview.postMessage(message);
+  }
+
+  private postTokenUsage(): void {
+    this.postToWebview({
+      command: "tokenUsageUpdated",
+      usage: this.tokenTracker.getUsage()
+    });
+  }
+
+  private estimateTokens(text: string): number {
+    if (!text.trim()) {
+      return 0;
+    }
+    return Math.ceil(text.length / ESTIMATED_CHARS_PER_TOKEN);
   }
 
   private getBuiltWebviewHtml(

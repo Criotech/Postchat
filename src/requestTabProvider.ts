@@ -242,7 +242,7 @@ export class RequestTabProvider {
 
       await panel.webview.postMessage({
         command: "askAIResponse",
-        text: response,
+        text: response.text,
         endpointId: endpoint.id
       });
     } catch (error) {

@@ -4,6 +4,7 @@ import { ExplorerPanel } from "./components/ExplorerPanel";
 import { Header } from "./components/Header";
 import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
 import type { ConfigValues } from "./components/SettingsPanel";
+import type { TokenUsage } from "./components/TokenStatusBar";
 import { useBridgeListener } from "./hooks/useBridgeListener";
 import { BridgeProvider, useBridge } from "./lib/explorerBridge";
 import { resolveSlashCommand } from "./lib/slashCommands";
@@ -30,6 +31,13 @@ type CollectionSummary = {
 type ProgrammaticSendRequest = {
   id: number;
   text: string;
+};
+
+const EMPTY_TOKEN_USAGE: TokenUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  estimatedCostUsd: 0
 };
 
 type IncomingMessage =
@@ -104,7 +112,8 @@ type IncomingMessage =
       openaiModel: string;
       ollamaEndpoint: string;
       ollamaModel: string;
-    };
+    }
+  | { command: "tokenUsageUpdated"; usage: TokenUsage };
 
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -364,6 +373,7 @@ function AppContent(): JSX.Element {
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
   const [isCollectionParsing, setIsCollectionParsing] = useState(false);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage>(EMPTY_TOKEN_USAGE);
 
   const [programmaticInput, setProgrammaticInput] = useState<string | null>(null);
   const [programmaticSendRequest, setProgrammaticSendRequest] = useState<ProgrammaticSendRequest | null>(null);
@@ -641,6 +651,14 @@ function AppContent(): JSX.Element {
           setActiveModel(message.model);
           break;
         case "configLoaded":
+          setActiveProvider(message.provider);
+          setActiveModel(
+            message.provider === "openai"
+              ? message.openaiModel
+              : message.provider === "ollama"
+                ? message.ollamaModel
+                : message.anthropicModel
+          );
           setConfigValues({
             provider: message.provider,
             anthropicApiKey: message.anthropicApiKey,
@@ -650,6 +668,9 @@ function AppContent(): JSX.Element {
             ollamaEndpoint: message.ollamaEndpoint,
             ollamaModel: message.ollamaModel
           });
+          break;
+        case "tokenUsageUpdated":
+          setTokenUsage(message.usage);
           break;
         case "clearChat":
           setMessages([]);
@@ -666,6 +687,7 @@ function AppContent(): JSX.Element {
           setProgrammaticSendRequest(null);
           bridgeRequestEndpointMapRef.current = {};
           setIsCollectionParsing(false);
+          setTokenUsage(EMPTY_TOKEN_USAGE);
           clearParsingTimer();
           break;
         case "requestStarted":
@@ -881,6 +903,7 @@ function AppContent(): JSX.Element {
     setExecutionResults({});
     setProgrammaticInput(null);
     setProgrammaticSendRequest(null);
+    setTokenUsage(EMPTY_TOKEN_USAGE);
     bridgeRequestEndpointMapRef.current = {};
     vscode.postMessage({ command: "clearChat" });
   }, [clearParsingTimer]);
@@ -999,6 +1022,8 @@ function AppContent(): JSX.Element {
               programmaticInput={programmaticInput}
               programmaticSendRequest={programmaticSendRequest}
               onProgrammaticSendConsumed={() => setProgrammaticSendRequest(null)}
+              tokenUsage={tokenUsage}
+              activeProvider={activeProvider}
               // isSecretsModalOpen={isSecretsModalOpen}
               // secretFindings={secretFindings}
               // onConfirmSend={handleConfirmSend}
