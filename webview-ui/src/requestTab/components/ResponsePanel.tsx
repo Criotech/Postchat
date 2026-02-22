@@ -116,25 +116,8 @@ export function ResponsePanel({
     setTimeout(() => setCopiedBody(false), 1200);
   };
 
-  const showEmptyState = !runResult && aiMessages.length === 0 && !isAiLoading;
-
   return (
     <section className="flex h-full min-h-0 flex-col">
-      {showEmptyState ? (
-        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-          <div
-            className="flex h-14 w-14 items-center justify-center rounded-xl"
-            style={{ background: "var(--vscode-editorWidget-background)" }}
-          >
-            <Send size={24} strokeWidth={1.2} className="text-vscode-descriptionFg" />
-          </div>
-          <p className="text-sm font-medium text-vscode-editorFg">Send a request to see the response</p>
-          <p className="max-w-xs text-xs text-vscode-descriptionFg">
-            Or click Ask AI to get help with this endpoint
-          </p>
-        </div>
-      ) : (
-        <>
           {/* Tabs + status summary in one bar */}
           <div className="flex items-end border-b border-vscode-panelBorder">
             <nav className="flex text-[12px]">
@@ -397,7 +380,7 @@ export function ResponsePanel({
                     <div className="flex flex-col items-center gap-2 py-6 text-center">
                       <MessageSquare size={24} strokeWidth={1.2} className="text-vscode-descriptionFg" />
                       <p className="text-xs text-vscode-descriptionFg">
-                        Ask for help about this request and response.
+                        Ask anything about this endpoint.
                       </p>
                     </div>
                   ) : (
@@ -458,8 +441,6 @@ export function ResponsePanel({
               </div>
             ) : null}
           </div>
-        </>
-      )}
     </section>
   );
 }
@@ -621,6 +602,15 @@ function LoadingState({ label, compact = false }: { label: string; compact?: boo
 }
 
 function buildQuickActions(result: ExecutionResult | null): string[] {
+  if (!result) {
+    return [
+      "What does this endpoint do?",
+      "What parameters are required?",
+      "Show a curl example",
+      "What does it return?"
+    ];
+  }
+
   const prompts = [
     "Explain this response",
     "Why this status code?",
@@ -628,7 +618,7 @@ function buildQuickActions(result: ExecutionResult | null): string[] {
     "What does the body mean?"
   ];
 
-  if (result && result.status >= 400) {
+  if (result.status >= 400) {
     prompts.push("How to fix this error?");
   }
 
