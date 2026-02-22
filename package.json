@@ -1,9 +1,30 @@
 {
   "name": "postchat",
   "displayName": "Postchat",
-  "description": "Sidebar chat for Postman Collection Q&A.",
+  "description": "AI-powered API client in VS Code — chat with your Postman collections and OpenAPI specs, explore endpoints, and run requests without leaving the editor.",
   "version": "0.0.1",
   "publisher": "opeoluwasiyanbola",
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Criotech/Postchat"
+  },
+  "homepage": "https://github.com/Criotech/Postchat#readme",
+  "bugs": {
+    "url": "https://github.com/Criotech/Postchat/issues"
+  },
+  "keywords": [
+    "postman",
+    "openapi",
+    "swagger",
+    "api",
+    "rest",
+    "ai",
+    "chat",
+    "claude",
+    "http-client"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },

@@ -1,4 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <rect x="8" y="8" width="112" height="112" rx="20" fill="#1f2937"/>
-  <path d="M34 42h60v30H58l-18 14V42z" fill="#f9fafb"/>
+  <!-- Dark background -->
+  <rect width="128" height="128" rx="22" fill="#0f172a"/>
+
+  <!-- Chat bubble body (indigo) -->
+  <rect x="14" y="20" width="86" height="54" rx="12" fill="#4f46e5"/>
+
+  <!-- Chat bubble tail -->
+  <path d="M14 70 L14 94 L40 70Z" fill="#4f46e5"/>
+
+  <!-- Lightning bolt (amber) — API speed -->
+  <path d="M62 28 L45 52 L56 52 L50 72 L72 46 L61 46 L66 28Z" fill="#fbbf24"/>
 </svg>
