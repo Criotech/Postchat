@@ -4,12 +4,14 @@ import remarkGfm from "remark-gfm";
 import { useBridge } from "../lib/explorerBridge";
 import type { Message } from "../types";
 import type { ParsedCollection } from "../types/spec";
+import { vscode } from "../vscode";
 import { CodeBlock } from "./CodeBlock";
 
 type MessageBubbleProps = {
   message: Message;
   onRunRequest?: (method: string, url: string) => void;
   parsedCollection?: ParsedCollection | null;
+  resolvedEndpointId?: string | null;
 };
 
 type ExtractedEndpointMention = {
@@ -167,7 +169,7 @@ function extractEndpointMentions(text: string): ExtractedEndpointMention[] {
   return matches;
 }
 
-export function MessageBubble({ message, onRunRequest, parsedCollection }: MessageBubbleProps): JSX.Element {
+export function MessageBubble({ message, onRunRequest, parsedCollection, resolvedEndpointId }: MessageBubbleProps): JSX.Element {
   const { emit } = useBridge();
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -218,6 +220,39 @@ export function MessageBubble({ message, onRunRequest, parsedCollection }: Messa
     [emit, parsedCollection]
   );
 
+  const mentionEndpointMap = useMemo(() => {
+    if (!parsedCollection) {
+      return new Map<string, string>();
+    }
+    const map = new Map<string, string>();
+    for (const mention of endpointMentions) {
+      const match = parsedCollection.endpoints.find(
+        (endpoint) =>
+          endpoint.method === mention.method && endpointPathMatches(endpoint.path, mention.path)
+      );
+      if (match) {
+        map.set(mention.label, match.id);
+      }
+    }
+    return map;
+  }, [endpointMentions, parsedCollection]);
+
+  const handleViewRequest = useCallback(
+    (mention: ExtractedEndpointMention) => {
+      const endpointId = mentionEndpointMap.get(mention.label);
+      if (endpointId) {
+        vscode.postMessage({ command: "openRequestTab", endpointId });
+      }
+    },
+    [mentionEndpointMap]
+  );
+
+  const handleViewResolvedRequest = useCallback(() => {
+    if (resolvedEndpointId) {
+      vscode.postMessage({ command: "openRequestTab", endpointId: resolvedEndpointId });
+    }
+  }, [resolvedEndpointId]);
+
   return (
     <article
       className={[
@@ -241,29 +276,39 @@ export function MessageBubble({ message, onRunRequest, parsedCollection }: Messa
           {message.text}
         </ReactMarkdown>
       )}
-      {endpointMatch && onRunRequest ? (
-        <button
-          type="button"
-          onClick={handleRunRequest}
-          className="mt-2 rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
-        >
-          ▶ Run this request
-        </button>
-      ) : null}
-
-      {!isUser && parsedCollection && endpointMentions.length > 0 ? (
+      {!isUser && !isSystem && (resolvedEndpointId || (endpointMatch && onRunRequest) || mentionEndpointMap.size > 0) ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {endpointMentions.map((mention) => (
+          {endpointMatch && onRunRequest ? (
             <button
-              key={mention.label}
               type="button"
-              onClick={() => handleViewInExplorer(mention)}
-              className="rounded-full border border-vscode-panelBorder bg-vscode-inputBg px-2 py-0.5 text-[11px] text-vscode-descriptionFg hover:underline"
-              title={`View ${mention.label} in Explorer`}
+              onClick={handleRunRequest}
+              className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
             >
-              {`📍 View in Explorer: ${mention.label}`}
+              ▶ Run this request
             </button>
-          ))}
+          ) : null}
+          {resolvedEndpointId ? (
+            <button
+              type="button"
+              onClick={handleViewResolvedRequest}
+              className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+            >
+              View Request
+            </button>
+          ) : null}
+          {endpointMentions.map((mention) =>
+            mentionEndpointMap.has(mention.label) && mentionEndpointMap.get(mention.label) !== resolvedEndpointId ? (
+              <button
+                key={mention.label}
+                type="button"
+                onClick={() => handleViewRequest(mention)}
+                className="rounded bg-vscode-buttonSecondaryBg px-2 py-0.5 text-[11px] text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+                title={`Open ${mention.label} in request tab`}
+              >
+                {`View Request: ${mention.label}`}
+              </button>
+            ) : null
+          )}
         </div>
       ) : null}
     </article>

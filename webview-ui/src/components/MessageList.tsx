@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Message } from "../types";
 import { useBridge } from "../lib/explorerBridge";
 import { MessageBubble } from "./MessageBubble";
@@ -86,6 +86,58 @@ function getRequestPath(url: string): string | null {
   }
 }
 
+// Pattern to extract METHOD + endpoint-name from user messages like "GET Create User — …"
+const USER_ENDPOINT_PATTERN =
+  /^\s*\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b\s+(.+?)(?:\s*[-—]|$)/i;
+
+// Also try to extract METHOD + URL from user messages
+const USER_METHOD_URL_PATTERN =
+  /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b\s+(https?:\/\/[^\s,)]+|\/[^\s,)]+)/i;
+
+function resolveEndpointFromUserMessage(
+  text: string,
+  collection: ParsedCollection
+): string | null {
+  // Try matching "METHOD EndpointName —" (from buildEndpointQuestion)
+  const nameMatch = USER_ENDPOINT_PATTERN.exec(text);
+  if (nameMatch) {
+    const method = nameMatch[1].toUpperCase();
+    const name = nameMatch[2].trim();
+    const endpoint = collection.endpoints.find(
+      (ep) => ep.method === method && ep.name === name
+    );
+    if (endpoint) {
+      return endpoint.id;
+    }
+  }
+
+  // Try matching METHOD + URL
+  const urlMatch = USER_METHOD_URL_PATTERN.exec(text);
+  if (urlMatch) {
+    const method = urlMatch[1].toUpperCase();
+    const rawUrl = urlMatch[2].trim();
+    const candidatePath = getRequestPath(rawUrl);
+    if (candidatePath) {
+      const endpoint = collection.endpoints.find(
+        (ep) => ep.method === method && endpointPathMatches(ep.path, candidatePath)
+      );
+      if (endpoint) {
+        return endpoint.id;
+      }
+    }
+  }
+
+  // Fuzzy: check if any endpoint name appears in the user message
+  const lowerText = text.toLowerCase();
+  for (const ep of collection.endpoints) {
+    if (ep.name && ep.name.length > 3 && lowerText.includes(ep.name.toLowerCase())) {
+      return ep.id;
+    }
+  }
+
+  return null;
+}
+
 export function MessageList({
   messages,
   isThinking,
@@ -100,6 +152,30 @@ export function MessageList({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isThinking, executionResults]);
+
+  // Build a map: assistant message id → resolved endpoint id from preceding user message
+  const assistantEndpointMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!parsedCollection) {
+      return map;
+    }
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg.role === "assistant" && i > 0) {
+        // Walk backwards to find the preceding user message
+        for (let j = i - 1; j >= 0; j--) {
+          if (messages[j].role === "user") {
+            const endpointId = resolveEndpointFromUserMessage(messages[j].text, parsedCollection);
+            if (endpointId) {
+              map.set(msg.id, endpointId);
+            }
+            break;
+          }
+        }
+      }
+    }
+    return map;
+  }, [messages, parsedCollection]);
 
   const resolveEndpointId = useCallback(
     (request: ExecutableRequest, endpointId?: string | null): string | null => {
@@ -148,6 +224,7 @@ export function MessageList({
             message={message}
             onRunRequest={onRunRequest}
             parsedCollection={parsedCollection}
+            resolvedEndpointId={assistantEndpointMap.get(message.id) ?? null}
           />
         ))}
 
