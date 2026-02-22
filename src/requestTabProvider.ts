@@ -232,11 +232,6 @@ export class RequestTabProvider {
         text: response,
         endpointId: endpoint.id
       });
-      await panel.webview.postMessage({
-        command: "aiResponse",
-        text: response,
-        endpointId: endpoint.id
-      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await panel.webview.postMessage({

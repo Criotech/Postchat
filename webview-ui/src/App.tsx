@@ -116,19 +116,9 @@ function createId(): string {
 
 function buildEndpointQuestion(
   endpoint: ParsedEndpoint,
-  specType: SpecType | null
+  _specType: SpecType | null
 ): string {
-  const detail = endpoint.description?.trim() || `Path: ${endpoint.path}`;
-
-  if (specType === "openapi3" || specType === "swagger2") {
-    return `Explain the ${endpoint.method} ${endpoint.name} operation. ${detail}. Include required auth, parameters, and runnable curl + JavaScript examples.`;
-  }
-
-  if (endpoint.requiresAuth) {
-    return `How do I authenticate and call ${endpoint.method} ${endpoint.name}? ${detail}. Show complete curl and JavaScript fetch examples.`;
-  }
-
-  return `How do I use ${endpoint.method} ${endpoint.name}? ${detail}. Include required parameters and a complete request example.`;
+  return `${endpoint.method} ${endpoint.name} — `;
 }
 
 function setHeaderIfMissing(headers: Record<string, string>, key: string, value: string): void {
@@ -451,12 +441,7 @@ function AppContent(): JSX.Element {
             setProgrammaticInput(question);
           }, 150);
 
-          const sendTimer = window.setTimeout(() => {
-            bridgeSendCounterRef.current += 1;
-            setProgrammaticSendRequest({ id: bridgeSendCounterRef.current, text: question });
-          }, 300);
-
-          bridgeTimeoutIdsRef.current.push(fillTimer, sendTimer);
+          bridgeTimeoutIdsRef.current.push(fillTimer);
           return;
         }
         case "runEndpoint": {
@@ -800,8 +785,7 @@ function AppContent(): JSX.Element {
 
       const command = resolveSlashCommand(trimmed);
       if (command === "/summarize") {
-        const transformed =
-          "Give me a high-level summary of this API collection. List the main resource groups, total number of endpoints, and the base URL.";
+        const transformed = "Summarize this API collection briefly.";
         setHasSentFirstMessage(true);
         setQueuedMessage(transformed);
         vscode.postMessage({ command: "sendMessage", text: transformed });
@@ -809,8 +793,7 @@ function AppContent(): JSX.Element {
       }
 
       if (command === "/auth") {
-        const transformed =
-          "Explain the authentication mechanism used in this collection step by step. Include code examples for obtaining and using a token.";
+        const transformed = "What authentication does this API use?";
         setHasSentFirstMessage(true);
         setQueuedMessage(transformed);
         vscode.postMessage({ command: "sendMessage", text: transformed });
@@ -819,9 +802,9 @@ function AppContent(): JSX.Element {
 
       if (command === "/find") {
         const keyword = trimmed.replace(/^\/find\b/i, "").trim();
-        const transformed = `Find all requests related to: ${
-          keyword || "all endpoints"
-        }. List each matching endpoint with its method and URL.`;
+        const transformed = keyword
+          ? `Which endpoints relate to "${keyword}"?`
+          : "List the available endpoints.";
         setHasSentFirstMessage(true);
         setQueuedMessage(transformed);
         vscode.postMessage({ command: "sendMessage", text: transformed });

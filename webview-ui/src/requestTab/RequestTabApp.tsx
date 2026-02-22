@@ -133,7 +133,6 @@ export default function RequestTabApp(): JSX.Element {
           setPendingOAuthRequest(null);
           setIsRefreshingEndpointData(false);
           break;
-        case "aiResponse":
         case "askAIResponse":
           setAiResponse(message.text);
           setIsAiLoading(false);
@@ -545,7 +544,7 @@ export default function RequestTabApp(): JSX.Element {
         onMethodChange={handleMethodChange}
         onUrlChange={handleUrlChange}
         onSend={handleSend}
-        onAskAI={() => handleAskAi("Review this request. Flag any issues with headers, params, or body.")}
+        onAskAI={() => setActiveResponseTab("ai")}
         onResetToOriginal={handleResetToOriginal}
         onCopySnippet={handleCopySnippet}
         onSaveToCollection={handleSaveToCollection}

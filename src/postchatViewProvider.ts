@@ -695,8 +695,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private async handleRunRequest(requestNameRaw: string): Promise<void> {
     const requestName = requestNameRaw.trim();
     const prompt = requestName
-      ? `Show me how to run the API request named "${requestName}". Include method, URL, required headers, request body, and a runnable curl example.`
-      : "Show me how to run an API request from this loaded specification. Include method, URL, required headers, request body, and a runnable curl example.";
+      ? `How do I call the "${requestName}" endpoint?`
+      : "How do I call an endpoint from this API?";
 
     await this.handleSendMessage(prompt);
   }
