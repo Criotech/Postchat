@@ -359,7 +359,7 @@ function AppContent(): JSX.Element {
   const [error, setError] = useState<string | undefined>();
   // const [secretFindings, setSecretFindings] = useState<SecretFinding[]>([]);
   // const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
-  // const [queuedMessage, setQueuedMessage] = useState<string | undefined>();
+  const [queuedMessage, setQueuedMessage] = useState<string | undefined>();
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
@@ -657,7 +657,7 @@ function AppContent(): JSX.Element {
           setIsThinking(false);
           // setIsSecretsModalOpen(false);
           // setSecretFindings([]);
-          // setQueuedMessage(undefined);
+          setQueuedMessage(undefined);
           setSuggestions([]);
           setHasSentFirstMessage(false);
           setPendingExecution(null);
