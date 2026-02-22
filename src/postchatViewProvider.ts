@@ -1,9 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { parseCollectionWithStats, pickCollectionFile } from "./collectionParser";
+import { pickCollectionFile } from "./collectionParser";
 import { parseEnvironment, pickEnvironmentFile } from "./environmentParser";
-import { detectSpecType, parseOpenApi, type SpecType } from "./openApiParser";
+import {
+  collectionToMarkdown,
+  parseSpec,
+  resolveVariables,
+  type ParsedCollection,
+  type SpecType
+} from "./specParser";
 import {
   ANTHROPIC_MODEL,
   MODEL_NAME,
@@ -15,6 +21,7 @@ import { filterCollectionMarkdown } from "./collectionFilter";
 import { findRequestByKeyword } from "./collectionLookup";
 import { generateSuggestions } from "./promptSuggester";
 import { executeRequest, type ExecutableRequest } from "./requestExecutor";
+import { RequestTabProvider } from "./requestTabProvider";
 import { scanForSecrets } from "./secretScanner";
 
 type ConversationTurn = {
@@ -23,17 +30,38 @@ type ConversationTurn = {
 };
 
 type LoadedSpecType = Exclude<SpecType, "unknown">;
-type ParsedSpec = {
+
+type LoadedCollectionState = {
+  name: string;
   markdown: string;
-  requestCount: number;
   specType: LoadedSpecType;
+  environment?: Record<string, string>;
+  envName?: string;
+  parsedCollection: ParsedCollection;
+  resolvedParsedCollection: ParsedCollection;
+  resolvedMarkdown: string;
 };
+
+type CollectionSummary = {
+  id: string;
+  path: string;
+  name: string;
+  specType: LoadedSpecType;
+  envName?: string;
+};
+
 const UNRECOGNIZED_SPEC_ERROR =
-  "Unrecognized file format. Please select a Postman Collection or OpenAPI/Swagger specification.";
+  "Unrecognized file format. Please select a Postman Collection (.json) or an OpenAPI/Swagger specification (.yaml, .yml, .json).";
+const MAX_LOADED_COLLECTIONS = 5;
 
 type IncomingWebviewMessage =
   | { command: "loadCollection" }
+  | { command: "switchCollection"; id: string }
+  | { command: "removeCollection"; id: string }
   | { command: "loadEnvironment" }
+  | { command: "openRequestTab"; endpointId: string }
+  | { command: "setSelectedEndpoint"; endpointId: string | null }
+  | { command: "getCollectionData" }
   | { command: "sendMessage"; text?: string }
   | { command: "runRequest"; requestName?: string }
   | { command: "executeRequest"; request: ExecutableRequest }
@@ -49,18 +77,41 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private conversationHistory: ConversationTurn[] = [];
-  /** Redacted markdown (env vars as {{placeholders}}) — sent to the LLM */
-  private collectionMarkdown: string | null = null;
-  /** Resolved markdown (env vars substituted) — used for request execution only */
-  private resolvedCollectionMarkdown: string | null = null;
-  private collectionName: string | null = null;
-  private collectionFilePath: string | null = null;
-  private collectionSpecType: LoadedSpecType | null = null;
-  private environmentVariables: Record<string, string> | null = null;
+  private collections: Map<string, LoadedCollectionState> = new Map();
+  private activeCollectionId: string | null = null;
+  private selectedExplorerEndpointId: string | null = null;
   private hasSecretSendApproval = false;
   private pendingConfirmedMessage: string | null = null;
 
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly requestTabProvider: RequestTabProvider
+  ) {}
+
+  public getResolvedParsedCollection(): ParsedCollection | null {
+    return this.getActiveCollection()?.resolvedParsedCollection ?? null;
+  }
+
+  public getActiveEnvironment(): Record<string, string> {
+    return this.getActiveCollection()?.environment ?? {};
+  }
+
+  public openSelectedRequestTab(): boolean {
+    const selectedId = this.selectedExplorerEndpointId?.trim() ?? "";
+    if (!selectedId) {
+      return false;
+    }
+
+    const endpoint = this.getActiveCollection()?.resolvedParsedCollection.endpoints.find(
+      (item) => item.id === selectedId
+    );
+    if (!endpoint) {
+      return false;
+    }
+
+    this.requestTabProvider.openRequestTab(endpoint);
+    return true;
+  }
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
@@ -101,6 +152,131 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     });
 
     webviewView.onDidDispose(() => configDisposable.dispose());
+  }
+
+  private getActiveCollection(): LoadedCollectionState | null {
+    if (!this.activeCollectionId) {
+      return null;
+    }
+    return this.collections.get(this.activeCollectionId) ?? null;
+  }
+
+  private getCollectionsSummary(): CollectionSummary[] {
+    return Array.from(this.collections.entries()).map(([id, collection]) => ({
+      id,
+      path: id,
+      name: collection.name,
+      specType: collection.specType,
+      envName: collection.envName
+    }));
+  }
+
+  private cloneParsedCollection(collection: ParsedCollection): ParsedCollection {
+    return JSON.parse(JSON.stringify(collection)) as ParsedCollection;
+  }
+
+  private createCollectionState(
+    parsed: ParsedCollection,
+    environment?: Record<string, string>,
+    envName?: string
+  ): LoadedCollectionState {
+    const resolved = environment ? resolveVariables(parsed, environment) : parsed;
+
+    return {
+      name: parsed.title,
+      markdown: collectionToMarkdown(parsed),
+      specType: parsed.specType as LoadedSpecType,
+      environment,
+      envName,
+      parsedCollection: parsed,
+      resolvedParsedCollection: resolved,
+      resolvedMarkdown: collectionToMarkdown(resolved)
+    };
+  }
+
+  private async refreshCollectionFromDisk(collectionId: string): Promise<LoadedCollectionState | null> {
+    const existing = this.collections.get(collectionId);
+    if (!existing) {
+      return null;
+    }
+
+    const parsed = await parseSpec(collectionId);
+    const next = this.createCollectionState(parsed, existing.environment, existing.envName);
+    this.collections.set(collectionId, next);
+
+    return next;
+  }
+
+  private ensureSelectedEndpointIsValid(): void {
+    const active = this.getActiveCollection();
+    if (!active || !this.selectedExplorerEndpointId) {
+      return;
+    }
+
+    if (
+      !active.resolvedParsedCollection.endpoints.some(
+        (endpoint) => endpoint.id === this.selectedExplorerEndpointId
+      )
+    ) {
+      this.selectedExplorerEndpointId = null;
+    }
+  }
+
+  private postActiveCollectionData(): void {
+    const active = this.getActiveCollection();
+
+    this.postToWebview({
+      command: "collectionData",
+      activeCollectionId: this.activeCollectionId,
+      collections: this.getCollectionsSummary(),
+      collection: active ? this.cloneParsedCollection(active.resolvedParsedCollection) : null
+    });
+  }
+
+  private postCollectionChanged(
+    command: "collectionLoaded" | "collectionSwitched",
+    collectionId: string,
+    collection: LoadedCollectionState
+  ): void {
+    this.postToWebview({
+      command,
+      id: collectionId,
+      path: collectionId,
+      name: collection.name,
+      specType: collection.specType,
+      envName: collection.envName,
+      baseUrl: collection.resolvedParsedCollection.baseUrl,
+      endpointCount: collection.resolvedParsedCollection.endpoints.length,
+      authSchemes: collection.resolvedParsedCollection.authSchemes,
+      rawSpec: collection.resolvedParsedCollection.rawSpec,
+      activeCollectionId: this.activeCollectionId,
+      collections: this.getCollectionsSummary()
+    });
+  }
+
+  private async refreshSuggestionsForActiveCollection(): Promise<void> {
+    const active = this.getActiveCollection();
+    if (!active) {
+      this.postToWebview({ command: "showSuggestions", suggestions: [] });
+      return;
+    }
+
+    try {
+      const anthropicKey = vscode.workspace
+        .getConfiguration("postchat")
+        .get<string>("apiKey", "")
+        .trim();
+
+      const suggestions = await generateSuggestions({
+        apiKey: anthropicKey,
+        provider: MODEL_NAME,
+        collectionMarkdown: active.markdown
+      });
+
+      this.postToWebview({ command: "showSuggestions", suggestions });
+    } catch {
+      this.postToWebview({ command: "showSuggestions", suggestions: [] });
+    }
   }
 
   private postProviderInfo(): void {
@@ -183,6 +359,12 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "loadCollection":
         await this.handleLoadCollection();
         break;
+      case "switchCollection":
+        await this.handleSwitchCollection(message.id);
+        break;
+      case "removeCollection":
+        await this.handleRemoveCollection(message.id);
+        break;
       case "sendMessage":
         await this.handleSendMessage(message.text ?? "");
         break;
@@ -207,6 +389,18 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "loadEnvironment":
         await this.handleLoadEnvironment();
         break;
+      case "openRequestTab":
+        this.handleOpenRequestTab(message.endpointId);
+        break;
+      case "setSelectedEndpoint":
+        this.selectedExplorerEndpointId =
+          typeof message.endpointId === "string" && message.endpointId.trim()
+            ? message.endpointId.trim()
+            : null;
+        break;
+      case "getCollectionData":
+        this.postActiveCollectionData();
+        break;
       case "clearChat":
         this.conversationHistory = [];
         this.postToWebview({ command: "clearChat" });
@@ -217,45 +411,6 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       default:
         break;
     }
-  }
-
-  private parseSpecWithStats(
-    filePath: string,
-    specType: SpecType,
-    environment?: Record<string, string>
-  ): ParsedSpec {
-    if (specType === "postman") {
-      const parsed = parseCollectionWithStats(filePath, environment);
-      return { ...parsed, specType: "postman" };
-    }
-
-    if (specType === "openapi3" || specType === "swagger2") {
-      const markdown = parseOpenApi(filePath);
-      return {
-        markdown,
-        requestCount: this.countRequestBlocks(markdown),
-        specType
-      };
-    }
-
-    const extension = path.extname(filePath).toLowerCase();
-    if (extension === ".yaml" || extension === ".yml" || extension === ".json") {
-      const markdown = parseOpenApi(filePath);
-      const inferredSpecType: LoadedSpecType = markdown.includes("- **Spec:** Swagger 2.x")
-        ? "swagger2"
-        : "openapi3";
-      return {
-        markdown,
-        requestCount: this.countRequestBlocks(markdown),
-        specType: inferredSpecType
-      };
-    }
-
-    throw new Error(UNRECOGNIZED_SPEC_ERROR);
-  }
-
-  private countRequestBlocks(markdown: string): number {
-    return (markdown.match(/^### \[/gm) ?? []).length;
   }
 
   private getSpecDisplayLabel(specType: LoadedSpecType): string {
@@ -274,63 +429,58 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       if (!selectedPath) {
         return;
       }
+
+      const alreadyLoaded = this.collections.has(selectedPath);
+      if (!alreadyLoaded && this.collections.size >= MAX_LOADED_COLLECTIONS) {
+        void vscode.window.showErrorMessage(
+          `You can load up to ${MAX_LOADED_COLLECTIONS} collections at once. Remove one before loading another.`
+        );
+        return;
+      }
+
       this.postToWebview({ command: "showSuggestions", suggestions: [] });
 
-      const detectedSpecType = detectSpecType(selectedPath);
-      const redacted = this.parseSpecWithStats(selectedPath, detectedSpecType);
-      const resolved = this.parseSpecWithStats(
-        selectedPath,
-        redacted.specType,
-        this.environmentVariables ?? undefined
-      );
-      this.collectionFilePath = selectedPath;
-      this.collectionName = path.basename(selectedPath);
-      this.collectionSpecType = redacted.specType;
+      const existing = this.collections.get(selectedPath);
+      const parsed = await parseSpec(selectedPath);
+      const next = this.createCollectionState(parsed, existing?.environment, existing?.envName);
 
-      this.collectionMarkdown = redacted.markdown;
-      this.resolvedCollectionMarkdown = resolved.markdown;
-      this.conversationHistory = [];
+      this.collections.set(selectedPath, next);
+      this.activeCollectionId = selectedPath;
       this.hasSecretSendApproval = false;
       this.pendingConfirmedMessage = null;
 
-      this.postToWebview({
-        command: "collectionLoaded",
-        name: this.collectionName,
-        path: selectedPath,
-        specType: this.collectionSpecType
-      });
+      this.ensureSelectedEndpointIsValid();
+
+      this.postCollectionChanged("collectionLoaded", selectedPath, next);
+      this.postActiveCollectionData();
+
+      this.requestTabProvider.notifyCollectionReloaded();
       this.postAssistantMessage(
-        `Loaded ${this.getSpecDisplayLabel(this.collectionSpecType)} **${this.collectionName}**.`
+        `Loaded ${this.getSpecDisplayLabel(next.specType)} **${next.name}**.`
       );
 
-      if (redacted.requestCount === 0) {
+      if (next.resolvedParsedCollection.endpoints.length === 0) {
         this.postAssistantMessage(
           "This specification has no paths/endpoints defined. You can still chat about top-level API metadata."
         );
       }
 
-      // Suggestions always use the Anthropic key; falls back to static suggestions if unavailable
-      const anthropicKey = vscode.workspace
-        .getConfiguration("postchat")
-        .get<string>("apiKey", "")
-        .trim();
+      await this.refreshSuggestionsForActiveCollection();
 
-      const suggestions = await generateSuggestions({
-        apiKey: anthropicKey,
-        provider: MODEL_NAME,
-        collectionMarkdown: this.collectionMarkdown
-      });
-      this.postToWebview({ command: "showSuggestions", suggestions });
-
-      if (redacted.requestCount > 50) {
+      if (next.resolvedParsedCollection.endpoints.length > 50) {
         this.postAssistantMessage(
-          `Large specification detected (${redacted.requestCount} endpoints). Responses may be slower.`
+          `Large specification detected (${next.resolvedParsedCollection.endpoints.length} endpoints). Responses may be slower.`
         );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith("Could not read file: ")) {
+        this.postAssistantMessage(message);
+        return;
+      }
       if (
-        message === "Invalid YAML — could not parse the spec file." ||
+        message === "Invalid YAML syntax in spec file. Check the file is valid YAML." ||
+        message === "Invalid JSON in collection file. Check the file is valid JSON." ||
         message === UNRECOGNIZED_SPEC_ERROR
       ) {
         this.postAssistantMessage(message);
@@ -340,7 +490,84 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async handleSwitchCollection(collectionIdRaw: string): Promise<void> {
+    const collectionId = collectionIdRaw.trim();
+    if (!collectionId) {
+      return;
+    }
+
+    const collection = this.collections.get(collectionId);
+    if (!collection) {
+      this.postError(`Collection not found: ${collectionId}`);
+      return;
+    }
+
+    this.activeCollectionId = collectionId;
+    this.hasSecretSendApproval = false;
+    this.pendingConfirmedMessage = null;
+    this.ensureSelectedEndpointIsValid();
+
+    this.postToWebview({ command: "showSuggestions", suggestions: [] });
+    this.postCollectionChanged("collectionSwitched", collectionId, collection);
+    this.postActiveCollectionData();
+    this.requestTabProvider.notifyCollectionReloaded();
+
+    await this.refreshSuggestionsForActiveCollection();
+  }
+
+  private async handleRemoveCollection(collectionIdRaw: string): Promise<void> {
+    const collectionId = collectionIdRaw.trim();
+    if (!collectionId || !this.collections.has(collectionId)) {
+      return;
+    }
+
+    const wasActive = this.activeCollectionId === collectionId;
+    this.collections.delete(collectionId);
+
+    if (wasActive) {
+      const nextActive = this.collections.keys().next();
+      this.activeCollectionId = nextActive.done ? null : nextActive.value;
+      this.hasSecretSendApproval = false;
+      this.pendingConfirmedMessage = null;
+      this.ensureSelectedEndpointIsValid();
+    }
+
+    this.postToWebview({
+      command: "collectionRemoved",
+      id: collectionId,
+      activeCollectionId: this.activeCollectionId,
+      collections: this.getCollectionsSummary()
+    });
+
+    this.postActiveCollectionData();
+
+    if (wasActive) {
+      const active = this.getActiveCollection();
+      if (this.activeCollectionId && active) {
+        this.postCollectionChanged("collectionSwitched", this.activeCollectionId, active);
+      }
+      this.requestTabProvider.notifyCollectionReloaded();
+    }
+
+    if (this.activeCollectionId) {
+      this.postToWebview({ command: "showSuggestions", suggestions: [] });
+      await this.refreshSuggestionsForActiveCollection();
+    } else {
+      this.selectedExplorerEndpointId = null;
+      this.postToWebview({ command: "showSuggestions", suggestions: [] });
+    }
+  }
+
   private async handleLoadEnvironment(): Promise<void> {
+    const activeCollectionId = this.activeCollectionId;
+    const activeCollection = this.getActiveCollection();
+    if (!activeCollectionId || !activeCollection) {
+      this.postAssistantMessage(
+        "Load a Postman collection or OpenAPI/Swagger specification first, then load an environment."
+      );
+      return;
+    }
+
     try {
       const selectedPath = await pickEnvironmentFile();
       if (!selectedPath) {
@@ -348,22 +575,24 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       }
 
       const parsedEnvironment = parseEnvironment(selectedPath);
-      this.environmentVariables = parsedEnvironment;
       const environmentName = path.basename(selectedPath);
+      const updated = this.createCollectionState(
+        activeCollection.parsedCollection,
+        parsedEnvironment,
+        environmentName
+      );
 
-      if (this.collectionFilePath && this.collectionSpecType) {
-        const redacted = this.parseSpecWithStats(this.collectionFilePath, this.collectionSpecType);
-        this.collectionMarkdown = redacted.markdown;
-
-        const resolved = this.parseSpecWithStats(
-          this.collectionFilePath,
-          this.collectionSpecType,
-          this.environmentVariables
-        );
-        this.resolvedCollectionMarkdown = resolved.markdown;
-      }
-
-      this.postToWebview({ command: "environmentLoaded", name: environmentName });
+      this.collections.set(activeCollectionId, updated);
+      this.ensureSelectedEndpointIsValid();
+      this.postActiveCollectionData();
+      this.postToWebview({
+        command: "environmentLoaded",
+        id: activeCollectionId,
+        name: environmentName,
+        collections: this.getCollectionsSummary(),
+        activeCollectionId: this.activeCollectionId
+      });
+      this.requestTabProvider.notifyCollectionReloaded();
       this.postAssistantMessage(`Loaded environment **${environmentName}**.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -377,40 +606,65 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private handleOpenRequestTab(endpointIdRaw: string): void {
+    const endpointId = endpointIdRaw.trim();
+    if (!endpointId) {
+      return;
+    }
+    this.selectedExplorerEndpointId = endpointId;
+
+    const endpoint = this.getActiveCollection()?.resolvedParsedCollection.endpoints.find(
+      (item) => item.id === endpointId
+    );
+    if (!endpoint) {
+      this.postError(
+        `Unable to open request tab. Endpoint "${endpointId}" was not found in the active collection.`
+      );
+      return;
+    }
+
+    this.requestTabProvider.openRequestTab(endpoint);
+  }
+
   private async handleSendMessage(userMessageRaw: string): Promise<void> {
     const userMessage = userMessageRaw.trim();
     if (!userMessage) {
       return;
     }
 
-    if (!this.collectionMarkdown) {
+    const activeCollectionId = this.activeCollectionId;
+    if (!activeCollectionId) {
       this.postAssistantMessage(
         "Please load a Postman collection or OpenAPI/Swagger specification first, then ask your question."
       );
       return;
     }
 
-    if (this.collectionFilePath && this.collectionSpecType) {
-      try {
-        const redacted = this.parseSpecWithStats(this.collectionFilePath, this.collectionSpecType);
-        this.collectionMarkdown = redacted.markdown;
-
-        const resolved = this.parseSpecWithStats(
-          this.collectionFilePath,
-          this.collectionSpecType,
-          this.environmentVariables ?? undefined
-        );
-        this.resolvedCollectionMarkdown = resolved.markdown;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.postAssistantMessage(`Could not parse specification: ${message}`);
-        return;
-      }
+    let active = this.getActiveCollection();
+    if (!active) {
+      this.postAssistantMessage(
+        "Please load a Postman collection or OpenAPI/Swagger specification first, then ask your question."
+      );
+      return;
     }
 
+    try {
+      active = await this.refreshCollectionFromDisk(activeCollectionId);
+      if (!active) {
+        this.postAssistantMessage("Could not parse specification: active collection is unavailable.");
+        return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.postAssistantMessage(`Could not parse specification: ${message}`);
+      return;
+    }
+
+    this.ensureSelectedEndpointIsValid();
+    this.postActiveCollectionData();
+
     if (!this.hasSecretSendApproval) {
-      // Scan the resolved version since that contains real secrets
-      const findings = scanForSecrets(this.resolvedCollectionMarkdown ?? this.collectionMarkdown!);
+      const findings = scanForSecrets(active.resolvedMarkdown);
       if (findings.length > 0) {
         this.pendingConfirmedMessage = userMessage;
         this.postToWebview({ command: "secretsFound", findings });
@@ -441,14 +695,15 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private async handleRunRequest(requestNameRaw: string): Promise<void> {
     const requestName = requestNameRaw.trim();
     const prompt = requestName
-      ? `Show me how to run the API request named "${requestName}". Include method, URL, required headers, request body, and a runnable curl example.`
-      : "Show me how to run an API request from this loaded specification. Include method, URL, required headers, request body, and a runnable curl example.";
+      ? `How do I call the "${requestName}" endpoint?`
+      : "How do I call an endpoint from this API?";
 
     await this.handleSendMessage(prompt);
   }
 
   private async handleExecuteByEndpoint(method: string, url: string): Promise<void> {
-    const markdown = this.resolvedCollectionMarkdown ?? this.collectionMarkdown;
+    const active = this.getActiveCollection();
+    const markdown = active?.resolvedMarkdown ?? active?.markdown ?? null;
     if (!markdown) {
       this.postAssistantMessage(
         "No specification loaded. Please load a Postman collection or OpenAPI/Swagger file first."
@@ -456,17 +711,14 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Look up in the resolved markdown so env vars are substituted
     const candidates = findRequestByKeyword(markdown, url);
     const match = candidates.find(
       (r) => r.method.toUpperCase() === method.toUpperCase() && r.url.includes(url)
     );
 
     if (match) {
-      // Found full request with headers/body from the collection
       await this.handleExecuteRequest(match);
     } else {
-      // Fallback: execute with just method + URL (no headers/body)
       await this.handleExecuteRequest({
         name: `${method} ${url}`,
         method,
@@ -534,7 +786,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async sendMessageToLlm(userMessage: string): Promise<void> {
-    if (!this.collectionMarkdown) {
+    const active = this.getActiveCollection();
+    if (!active) {
       this.postAssistantMessage(
         "Please load a Postman collection or OpenAPI/Swagger specification first, then ask your question."
       );
@@ -590,7 +843,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
     try {
       const provider = getProvider(config);
-      const filteredMarkdown = filterCollectionMarkdown(this.collectionMarkdown, userMessage);
+      const filteredMarkdown = filterCollectionMarkdown(active.markdown, userMessage);
       const systemPrompt = buildSystemPrompt(filteredMarkdown);
 
       const assistantResponse = await provider.sendMessage({
@@ -657,7 +910,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       .replace(/(src|href)="\.\/(.*?)"/g, (_match, attr, assetPath) => {
         const uri = webview.asWebviewUri(vscode.Uri.joinPath(distUri, assetPath)).toString();
         return `${attr}="${uri}"`;
-      });
+      })
+      .replace(/ crossorigin/g, "");
   }
 
   private getPlaceholderHtml(): string {

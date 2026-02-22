@@ -22,6 +22,7 @@ export type ExecutionResult = {
 type RequestResultProps = {
   request: ExecutableRequest;
   result: ExecutionResult;
+  onViewInExplorer?: () => void;
 };
 
 function getMethodColor(method: string): string {
@@ -71,7 +72,11 @@ function detectLanguage(body: string, headers: Record<string, string>): string {
   return "text";
 }
 
-export function RequestResult({ request, result }: RequestResultProps): JSX.Element {
+export function RequestResult({
+  request,
+  result,
+  onViewInExplorer
+}: RequestResultProps): JSX.Element {
   const [showHeaders, setShowHeaders] = useState(false);
   const [showBody, setShowBody] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -159,6 +164,13 @@ export function RequestResult({ request, result }: RequestResultProps): JSX.Elem
           className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
         >
           {copied ? "Copied!" : "Copy Response"}
+        </button>
+        <button
+          type="button"
+          onClick={onViewInExplorer}
+          className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
+        >
+          View in Explorer
         </button>
         <button
           type="button"

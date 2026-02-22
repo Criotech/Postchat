@@ -42,13 +42,17 @@ function scoreBlock(block: string, keywords: string[]): number {
  */
 export function filterCollectionMarkdown(markdown: string, userQuery: string): string {
   const keywords = extractKeywords(userQuery);
+  const endpointHeaderPattern = /^### (?:\[[A-Z]+]|[A-Z]+) /m;
 
   // Split into header (before first ###) and endpoint blocks
-  const firstBlockIndex = markdown.indexOf("\n### [");
+  const match = endpointHeaderPattern.exec(markdown);
+  const firstBlockIndex = match?.index ?? -1;
   const header = firstBlockIndex > 0 ? markdown.slice(0, firstBlockIndex).trim() : "";
-  const blockSection = firstBlockIndex > 0 ? markdown.slice(firstBlockIndex + 1) : markdown;
+  const blockSection = firstBlockIndex >= 0 ? markdown.slice(firstBlockIndex) : markdown;
 
-  const blocks = blockSection.split(/(?=^### \[)/m).filter((b) => b.trim());
+  const blocks = blockSection
+    .split(/(?=^### (?:\[[A-Z]+]|[A-Z]+) )/m)
+    .filter((b) => b.trim());
 
   // If the collection fits within budget, send it all
   if (blocks.length <= MAX_ENDPOINTS_IN_CONTEXT) {
@@ -79,3 +83,4 @@ export function filterCollectionMarkdown(markdown: string, userQuery: string): s
 
   return [header, truncationNote, ...selectedBlocks].filter(Boolean).join("\n\n");
 }
+

@@ -1,16 +1,27 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { COMMANDS } from "../lib/slashCommands";
 
 type InputBarProps = {
   onSend: (text: string) => void;
   isThinking: boolean;
   hasCollection: boolean;
+  programmaticInput?: string | null;
+  programmaticSendRequest?: { id: number; text: string } | null;
+  onProgrammaticSendConsumed?: () => void;
 };
 
-export function InputBar({ onSend, isThinking, hasCollection }: InputBarProps): JSX.Element {
+export function InputBar({
+  onSend,
+  isThinking,
+  hasCollection,
+  programmaticInput,
+  programmaticSendRequest,
+  onProgrammaticSendConsumed
+}: InputBarProps): JSX.Element {
   const [value, setValue] = useState("");
   const [isSlashPickerDismissed, setIsSlashPickerDismissed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastProgrammaticSendIdRef = useRef<number | null>(null);
 
   const slashQuery = useMemo(() => {
     if (!value.startsWith("/")) {
@@ -47,6 +58,40 @@ export function InputBar({ onSend, isThinking, hasCollection }: InputBarProps): 
     textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [value]);
+
+  useEffect(() => {
+    if (typeof programmaticInput !== "string") {
+      return;
+    }
+    setValue(programmaticInput);
+  }, [programmaticInput]);
+
+  useEffect(() => {
+    if (!programmaticSendRequest) {
+      return;
+    }
+
+    if (lastProgrammaticSendIdRef.current === programmaticSendRequest.id) {
+      return;
+    }
+
+    const text = programmaticSendRequest.text.trim();
+    if (text.length === 0) {
+      lastProgrammaticSendIdRef.current = programmaticSendRequest.id;
+      onProgrammaticSendConsumed?.();
+      return;
+    }
+
+    if (isThinking) {
+      return;
+    }
+
+    lastProgrammaticSendIdRef.current = programmaticSendRequest.id;
+    onSend(text);
+    setValue("");
+    setIsSlashPickerDismissed(false);
+    onProgrammaticSendConsumed?.();
+  }, [isThinking, onProgrammaticSendConsumed, onSend, programmaticSendRequest]);
 
   const submit = () => {
     const trimmed = value.trim();

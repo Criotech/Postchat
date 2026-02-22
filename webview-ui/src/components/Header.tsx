@@ -1,85 +1,111 @@
+import { CollectionSwitcher } from "./CollectionSwitcher";
+
 const PROVIDER_DISPLAY: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   ollama: "Ollama"
 };
 
+type CollectionSpecType = "postman" | "openapi3" | "swagger2";
+type CollectionSummary = {
+  id: string;
+  path: string;
+  name: string;
+  specType: CollectionSpecType;
+  envName?: string;
+};
+
 function abbreviateModel(model: string): string {
-  // Strip trailing date stamp from Anthropic model names (e.g. "claude-sonnet-4-5-20250929")
   return model.replace(/-\d{8}$/, "");
 }
 
 type HeaderProps = {
-  collectionName?: string;
-  collectionPath?: string;
-  collectionSpecType: "postman" | "openapi3" | "swagger2";
-  environmentName?: string;
+  collections: CollectionSummary[];
+  activeCollectionId: string | null;
+  isCollectionParsing?: boolean;
+  activeTab: "chat" | "explorer";
   activeProvider?: string;
   activeModel?: string;
   isSettingsOpen: boolean;
+  onTabChange: (tab: "chat" | "explorer") => void;
   onLoadCollection: () => void;
+  onSwitchCollection: (id: string) => void;
+  onRemoveCollection: (id: string) => void;
   onLoadEnvironment: () => void;
   onClearChat: () => void;
   onSettingsToggle: () => void;
 };
 
 export function Header({
-  collectionName,
-  collectionPath,
-  collectionSpecType,
-  environmentName,
+  collections,
+  activeCollectionId,
+  isCollectionParsing = false,
+  activeTab,
   activeProvider,
   activeModel,
   isSettingsOpen,
+  onTabChange,
   onLoadCollection,
+  onSwitchCollection,
+  onRemoveCollection,
   onLoadEnvironment,
   onClearChat,
   onSettingsToggle
 }: HeaderProps): JSX.Element {
   const providerLabel = activeProvider ? (PROVIDER_DISPLAY[activeProvider] ?? activeProvider) : null;
   const modelLabel = activeModel ? abbreviateModel(activeModel) : null;
-  const collectionIcon = collectionSpecType === "postman" ? "📦" : "📄";
+  const activeCollection =
+    (activeCollectionId
+      ? collections.find((collection) => collection.id === activeCollectionId)
+      : null) ?? null;
+  const isExplorerAvailable = Boolean(activeCollection) || isCollectionParsing;
+
+  const tabButtonClasses = (tab: "chat" | "explorer", isDisabled = false): string =>
+    [
+      "border-b-2 px-3 py-2 text-xs font-medium transition-colors",
+      tab === activeTab
+        ? "border-b-[var(--vscode-focusBorder)] text-[var(--vscode-tab-activeForeground)]"
+        : "border-b-transparent text-[var(--vscode-tab-inactiveForeground)] hover:text-[var(--vscode-tab-activeForeground)]",
+      isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+    ].join(" ");
 
   return (
     <header className="flex flex-col border-b border-vscode-panelBorder">
-      <div className="flex items-center justify-between px-3 py-2">
-        <div className="flex flex-col gap-1">
+      <div className="flex items-start justify-between gap-3 px-3 py-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           <h1 className="text-base font-semibold">Postchat</h1>
-          <div className="flex flex-col gap-1">
-            {collectionName ? (
-              <span
-                className="w-fit rounded-full bg-vscode-badgeBg px-2 py-0.5 text-xs text-vscode-badgeFg"
-                title={collectionPath}
+          {collections.length > 0 ? (
+            <CollectionSwitcher
+              collections={collections}
+              activeCollectionId={activeCollection?.id ?? collections[0].id}
+              onSwitchCollection={onSwitchCollection}
+              onRemoveCollection={onRemoveCollection}
+              onLoadCollection={onLoadCollection}
+            />
+          ) : (
+            <div className="flex items-center justify-center rounded border border-dashed border-vscode-panelBorder bg-vscode-inputBg/40 px-3 py-2">
+              <button
+                type="button"
+                onClick={onLoadCollection}
+                className="rounded bg-vscode-buttonBg px-2.5 py-1.5 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder"
               >
-                {collectionIcon} {collectionName}
-              </span>
-            ) : null}
-            {environmentName ? (
-              <span className="w-fit rounded-full bg-vscode-badgeBg px-2 py-0.5 text-xs text-vscode-badgeFg">
-                🔑 {environmentName}
-              </span>
-            ) : null}
-          </div>
+                Load Collection
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onLoadCollection}
-            className="rounded bg-vscode-buttonBg px-2.5 py-1.5 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder"
-          >
-            Load Collection
-          </button>
-
-          <button
-            type="button"
             onClick={onLoadEnvironment}
-            className="rounded border border-vscode-inputBorder bg-vscode-inputBg p-1.5 text-vscode-inputFg hover:bg-vscode-listHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder"
+            disabled={!activeCollection}
+            className="rounded border border-vscode-inputBorder bg-vscode-inputBg p-1.5 text-vscode-inputFg hover:bg-vscode-listHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Load Environment"
             title={
-              environmentName
-                ? "Load Postman Environment"
-                : "Load a Postman Environment file to resolve {{variables}}"
+              activeCollection
+                ? "Load Postman Environment for the active collection"
+                : "Load a collection first to attach an environment"
             }
           >
             <svg
@@ -139,6 +165,25 @@ export function Header({
             </svg>
           </button>
         </div>
+      </div>
+
+      <div className="flex items-center gap-1 border-t border-vscode-panelBorder bg-[var(--vscode-editorGroupHeader-tabsBackground)] px-2">
+        <button
+          type="button"
+          onClick={() => onTabChange("chat")}
+          className={tabButtonClasses("chat")}
+        >
+          💬 Chat
+        </button>
+        <button
+          type="button"
+          aria-disabled={!isExplorerAvailable}
+          title={isExplorerAvailable ? "Explorer" : "Load a collection to use the Explorer"}
+          onClick={() => onTabChange("explorer")}
+          className={tabButtonClasses("explorer", !isExplorerAvailable)}
+        >
+          🗂️ Explorer
+        </button>
       </div>
 
       {providerLabel && modelLabel ? (
