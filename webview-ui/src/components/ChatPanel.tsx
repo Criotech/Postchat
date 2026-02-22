@@ -2,17 +2,17 @@ import type { ConfigValues } from "./SettingsPanel";
 import { InputBar } from "./InputBar";
 import { MessageList } from "./MessageList";
 import type { ExecutableRequest, ExecutionResult } from "./RequestResult";
-import { SecretsWarningModal } from "./SecretsWarningModal";
+// import { SecretsWarningModal } from "./SecretsWarningModal";
 import { SettingsPanel } from "./SettingsPanel";
 import { SuggestedPrompts } from "./SuggestedPrompts";
 import type { Message } from "../types";
 import type { ParsedCollection } from "../types/spec";
 
-type SecretFinding = {
-  field: string;
-  pattern: string;
-  preview: string;
-};
+// type SecretFinding = {
+//   field: string;
+//   pattern: string;
+//   preview: string;
+// };
 
 type ChatPanelProps = {
   isSettingsOpen: boolean;
@@ -37,10 +37,10 @@ type ChatPanelProps = {
   programmaticInput: string | null;
   programmaticSendRequest: { id: number; text: string } | null;
   onProgrammaticSendConsumed: () => void;
-  isSecretsModalOpen: boolean;
-  secretFindings: SecretFinding[];
-  onConfirmSend: () => void;
-  onCancelSend: () => void;
+  // isSecretsModalOpen: boolean;
+  // secretFindings: SecretFinding[];
+  // onConfirmSend: () => void;
+  // onCancelSend: () => void;
 };
 
 export function ChatPanel({
@@ -63,10 +63,10 @@ export function ChatPanel({
   programmaticInput,
   programmaticSendRequest,
   onProgrammaticSendConsumed,
-  isSecretsModalOpen,
-  secretFindings,
-  onConfirmSend,
-  onCancelSend
+  // isSecretsModalOpen,
+  // secretFindings,
+  // onConfirmSend,
+  // onCancelSend
 }: ChatPanelProps): JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -106,13 +106,13 @@ export function ChatPanel({
         onProgrammaticSendConsumed={onProgrammaticSendConsumed}
       />
 
-      {isSecretsModalOpen ? (
+      {/* isSecretsModalOpen ? (
         <SecretsWarningModal
           findings={secretFindings}
           onSendAnyway={onConfirmSend}
           onCancel={onCancelSend}
         />
-      ) : null}
+      ) : null */}
     </div>
   );
 }

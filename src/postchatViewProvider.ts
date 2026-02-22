@@ -22,7 +22,7 @@ import { findRequestByKeyword } from "./collectionLookup";
 import { generateSuggestions } from "./promptSuggester";
 import { executeRequest, type ExecutableRequest } from "./requestExecutor";
 import { RequestTabProvider } from "./requestTabProvider";
-import { scanForSecrets } from "./secretScanner";
+// import { scanForSecrets } from "./secretScanner";
 
 type ConversationTurn = {
   role: "user" | "assistant";
@@ -67,8 +67,8 @@ type IncomingWebviewMessage =
   | { command: "executeRequest"; request: ExecutableRequest }
   | { command: "executeRequestByEndpoint"; method: string; url: string }
   | { command: "exportChat" }
-  | { command: "confirmSend"; originalMessage?: string }
-  | { command: "cancelSend" }
+  // | { command: "confirmSend"; originalMessage?: string }
+  // | { command: "cancelSend" }
   | { command: "clearChat" }
   | { command: "updateConfig"; key: string; value: string };
 
@@ -80,8 +80,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private collections: Map<string, LoadedCollectionState> = new Map();
   private activeCollectionId: string | null = null;
   private selectedExplorerEndpointId: string | null = null;
-  private hasSecretSendApproval = false;
-  private pendingConfirmedMessage: string | null = null;
+  // private hasSecretSendApproval = false;
+  // private pendingConfirmedMessage: string | null = null;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -368,12 +368,12 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "sendMessage":
         await this.handleSendMessage(message.text ?? "");
         break;
-      case "confirmSend":
-        await this.handleConfirmSend(message.originalMessage ?? "");
-        break;
-      case "cancelSend":
-        this.handleCancelSend();
-        break;
+      // case "confirmSend":
+      //   await this.handleConfirmSend(message.originalMessage ?? "");
+      //   break;
+      // case "cancelSend":
+      //   this.handleCancelSend();
+      //   break;
       case "runRequest":
         await this.handleRunRequest(message.requestName ?? "");
         break;
@@ -446,8 +446,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
       this.collections.set(selectedPath, next);
       this.activeCollectionId = selectedPath;
-      this.hasSecretSendApproval = false;
-      this.pendingConfirmedMessage = null;
+      // this.hasSecretSendApproval = false;
+      // this.pendingConfirmedMessage = null;
 
       this.ensureSelectedEndpointIsValid();
 
@@ -503,8 +503,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.activeCollectionId = collectionId;
-    this.hasSecretSendApproval = false;
-    this.pendingConfirmedMessage = null;
+    // this.hasSecretSendApproval = false;
+    // this.pendingConfirmedMessage = null;
     this.ensureSelectedEndpointIsValid();
 
     this.postToWebview({ command: "showSuggestions", suggestions: [] });
@@ -527,8 +527,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     if (wasActive) {
       const nextActive = this.collections.keys().next();
       this.activeCollectionId = nextActive.done ? null : nextActive.value;
-      this.hasSecretSendApproval = false;
-      this.pendingConfirmedMessage = null;
+      // this.hasSecretSendApproval = false;
+      // this.pendingConfirmedMessage = null;
       this.ensureSelectedEndpointIsValid();
     }
 
@@ -663,34 +663,34 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     this.ensureSelectedEndpointIsValid();
     this.postActiveCollectionData();
 
-    if (!this.hasSecretSendApproval) {
-      const findings = scanForSecrets(active.resolvedMarkdown);
-      if (findings.length > 0) {
-        this.pendingConfirmedMessage = userMessage;
-        this.postToWebview({ command: "secretsFound", findings });
-        return;
-      }
-      this.hasSecretSendApproval = true;
-    }
+    // if (!this.hasSecretSendApproval) {
+    //   const findings = scanForSecrets(active.resolvedMarkdown);
+    //   if (findings.length > 0) {
+    //     this.pendingConfirmedMessage = userMessage;
+    //     this.postToWebview({ command: "secretsFound", findings });
+    //     return;
+    //   }
+    //   this.hasSecretSendApproval = true;
+    // }
 
     await this.sendMessageToLlm(userMessage);
   }
 
-  private async handleConfirmSend(originalMessageRaw: string): Promise<void> {
-    const originalMessage = originalMessageRaw.trim();
-    const messageToSend = originalMessage || this.pendingConfirmedMessage?.trim() || "";
-    if (!messageToSend) {
-      return;
-    }
+  // private async handleConfirmSend(originalMessageRaw: string): Promise<void> {
+  //   const originalMessage = originalMessageRaw.trim();
+  //   const messageToSend = originalMessage || this.pendingConfirmedMessage?.trim() || "";
+  //   if (!messageToSend) {
+  //     return;
+  //   }
+  //
+  //   this.hasSecretSendApproval = true;
+  //   this.pendingConfirmedMessage = null;
+  //   await this.sendMessageToLlm(messageToSend);
+  // }
 
-    this.hasSecretSendApproval = true;
-    this.pendingConfirmedMessage = null;
-    await this.sendMessageToLlm(messageToSend);
-  }
-
-  private handleCancelSend(): void {
-    this.pendingConfirmedMessage = null;
-  }
+  // private handleCancelSend(): void {
+  //   this.pendingConfirmedMessage = null;
+  // }
 
   private async handleRunRequest(requestNameRaw: string): Promise<void> {
     const requestName = requestNameRaw.trim();
