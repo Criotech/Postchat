@@ -20,14 +20,13 @@ type RequestTabMessage =
   | { command: "tabReady" }
   | { command: "refreshEndpointData" };
 
-const ENVIRONMENT_STATE_KEY = "postchat.environmentVariables";
-
 export class RequestTabProvider {
   private openTabs: Map<string, vscode.WebviewPanel> = new Map();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly getCollection: () => ParsedCollection | null,
+    private readonly getEnvironmentVariables: () => Record<string, string>,
     private readonly llmClient: LlmProvider
   ) {}
 
@@ -392,7 +391,7 @@ export class RequestTabProvider {
   }
 
   private getEnvironment(): Record<string, string> {
-    return this.context.workspaceState.get<Record<string, string>>(ENVIRONMENT_STATE_KEY) ?? {};
+    return this.getEnvironmentVariables();
   }
 
   private getPlaceholderHtml(): string {

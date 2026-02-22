@@ -19,6 +19,13 @@ type SecretFinding = {
 
 type AppTab = "chat" | "explorer";
 type CollectionSpecType = Extract<SpecType, "postman" | "openapi3" | "swagger2">;
+type CollectionSummary = {
+  id: string;
+  path: string;
+  name: string;
+  specType: CollectionSpecType;
+  envName?: string;
+};
 
 type ProgrammaticSendRequest = {
   id: number;
@@ -26,21 +33,56 @@ type ProgrammaticSendRequest = {
 };
 
 type IncomingMessage =
-  | { command: "addMessage"; role: "user" | "assistant"; text: string }
+  | { command: "addMessage"; role: "user" | "assistant" | "system"; text: string }
   | { command: "showThinking"; value: boolean }
   | { command: "showError"; text: string }
   | {
       command: "collectionLoaded";
+      id: string;
       name: string;
       path: string;
       specType: CollectionSpecType;
+      envName?: string;
       baseUrl?: string;
       endpointCount?: number;
       authSchemes?: Array<{ type: string; name: string; details: Record<string, string> }>;
       rawSpec?: string;
+      activeCollectionId?: string | null;
+      collections?: CollectionSummary[];
     }
-  | { command: "collectionData"; collection: ParsedCollection | null }
-  | { command: "environmentLoaded"; name: string }
+  | {
+      command: "collectionSwitched";
+      id: string;
+      name: string;
+      path: string;
+      specType: CollectionSpecType;
+      envName?: string;
+      baseUrl?: string;
+      endpointCount?: number;
+      authSchemes?: Array<{ type: string; name: string; details: Record<string, string> }>;
+      rawSpec?: string;
+      activeCollectionId?: string | null;
+      collections?: CollectionSummary[];
+    }
+  | {
+      command: "collectionRemoved";
+      id: string;
+      activeCollectionId: string | null;
+      collections: CollectionSummary[];
+    }
+  | {
+      command: "collectionData";
+      collection: ParsedCollection | null;
+      activeCollectionId?: string | null;
+      collections?: CollectionSummary[];
+    }
+  | {
+      command: "environmentLoaded";
+      id: string;
+      name: string;
+      activeCollectionId?: string | null;
+      collections?: CollectionSummary[];
+    }
   | { command: "secretsFound"; findings: SecretFinding[] }
   | { command: "showSuggestions"; suggestions: string[] }
   | { command: "clearChat" }
@@ -304,17 +346,14 @@ function AppContent(): JSX.Element {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<AppTab>("chat");
-  const [collectionName, setCollectionName] = useState<string | undefined>();
-  const [collectionPath, setCollectionPath] = useState<string | undefined>();
-  const [collectionSpecType, setCollectionSpecType] = useState<CollectionSpecType>("postman");
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
+  const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
   const [specType, setSpecType] = useState<SpecType | null>(null);
   const [parsedCollection, setParsedCollection] = useState<ParsedCollection | null>(null);
   const [rawSpec, setRawSpec] = useState<string | null>(null);
-  const [endpointCount, setEndpointCount] = useState<number | null>(null);
   const [authSchemes, setAuthSchemes] = useState<
     Array<{ type: string; name: string; details: Record<string, string> }>
   >([]);
-  const [environmentName, setEnvironmentName] = useState<string | undefined>();
   const [activeProvider, setActiveProvider] = useState<string>("anthropic");
   const [activeModel, setActiveModel] = useState<string>("claude-sonnet-4-5");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -344,6 +383,7 @@ function AppContent(): JSX.Element {
   const bridgeTimeoutIdsRef = useRef<number[]>([]);
   const bridgeSendCounterRef = useRef(0);
   const activeTabRef = useRef<AppTab>("chat");
+  const activeCollectionIdRef = useRef<string | null>(null);
   const bridgeRequestEndpointMapRef = useRef<Record<string, string>>({});
 
   // Request execution state
@@ -354,6 +394,10 @@ function AppContent(): JSX.Element {
 
   const appendMessage = useCallback((role: Message["role"], text: string) => {
     setMessages((prev) => [...prev, { id: createId(), role, text }]);
+  }, []);
+
+  const appendSystemMessage = useCallback((text: string) => {
+    setMessages((prev) => [...prev, { id: createId(), role: "system", text }]);
   }, []);
 
   const setAppTab = useCallback((tab: AppTab) => {
@@ -378,6 +422,15 @@ function AppContent(): JSX.Element {
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  useEffect(() => {
+    activeCollectionIdRef.current = activeCollectionId;
+  }, [activeCollectionId]);
+
+  const activeCollection = useMemo(
+    () => collections.find((item) => item.id === activeCollectionId) ?? null,
+    [activeCollectionId, collections]
+  );
 
   useBridgeListener(
     (event) => {
@@ -468,11 +521,24 @@ function AppContent(): JSX.Element {
             setIsCollectionParsing(false);
             parsingTimeoutRef.current = null;
           }, 8000);
-          setCollectionName(message.name);
-          setCollectionPath(message.path);
-          setCollectionSpecType(message.specType);
+          setCollections((prev) => {
+            if (message.collections) {
+              return message.collections;
+            }
+            const others = prev.filter((item) => item.id !== message.id);
+            return [
+              ...others,
+              {
+                id: message.id,
+                path: message.path,
+                name: message.name,
+                specType: message.specType,
+                envName: message.envName
+              }
+            ];
+          });
+          setActiveCollectionId(message.activeCollectionId ?? message.id);
           setSpecType(message.specType);
-          setEndpointCount(message.endpointCount ?? null);
           setAuthSchemes(message.authSchemes ?? []);
           setRawSpec(
             message.specType === "openapi3" || message.specType === "swagger2"
@@ -487,23 +553,87 @@ function AppContent(): JSX.Element {
           bridgeRequestEndpointMapRef.current = {};
           vscode.postMessage({ command: "getCollectionData" });
           break;
+        case "collectionSwitched": {
+          const previousActiveId = activeCollectionIdRef.current;
+          clearParsingTimer();
+          setIsCollectionParsing(true);
+          parsingTimeoutRef.current = window.setTimeout(() => {
+            setIsCollectionParsing(false);
+            parsingTimeoutRef.current = null;
+          }, 8000);
+          setCollections((prev) => message.collections ?? prev);
+          setActiveCollectionId(message.activeCollectionId ?? message.id);
+          setSpecType(message.specType);
+          setAuthSchemes(message.authSchemes ?? []);
+          setRawSpec(
+            message.specType === "openapi3" || message.specType === "swagger2"
+              ? message.rawSpec ?? null
+              : null
+          );
+          setParsedCollection(null);
+          setSuggestions([]);
+          setHasSentFirstMessage(false);
+          setError(undefined);
+          setProgrammaticInput(null);
+          setProgrammaticSendRequest(null);
+          bridgeRequestEndpointMapRef.current = {};
+          if (previousActiveId && previousActiveId !== message.id) {
+            appendSystemMessage(`Switched to: ${message.name}`);
+          }
+          vscode.postMessage({ command: "getCollectionData" });
+          break;
+        }
+        case "collectionRemoved":
+          setCollections(message.collections);
+          setActiveCollectionId(message.activeCollectionId);
+          if (!message.activeCollectionId) {
+            setSpecType(null);
+            setAuthSchemes([]);
+            setRawSpec(null);
+            setParsedCollection(null);
+            setSuggestions([]);
+          }
+          setError(undefined);
+          break;
         case "collectionData":
+          if (message.collections) {
+            setCollections(message.collections);
+          }
+          if (message.activeCollectionId !== undefined) {
+            setActiveCollectionId(message.activeCollectionId);
+          }
           setParsedCollection(message.collection);
           setIsCollectionParsing(false);
           clearParsingTimer();
           if (message.collection) {
             setSpecType(message.collection.specType);
+            setAuthSchemes(message.collection.authSchemes ?? []);
             if (
               (message.collection.specType === "openapi3" ||
                 message.collection.specType === "swagger2") &&
               message.collection.rawSpec
             ) {
               setRawSpec(message.collection.rawSpec);
+            } else if (message.collection.specType === "postman") {
+              setRawSpec(null);
             }
+          } else {
+            setRawSpec(null);
+            setAuthSchemes([]);
+            setSpecType(null);
           }
           break;
         case "environmentLoaded":
-          setEnvironmentName(message.name);
+          setCollections((prev) =>
+            message.collections
+              ? message.collections
+              : prev.map((item) =>
+                  item.id === message.id ? { ...item, envName: message.name } : item
+                )
+          );
+          if (message.activeCollectionId !== undefined) {
+            setActiveCollectionId(message.activeCollectionId);
+          }
           setError(undefined);
           break;
         case "showError":
@@ -603,7 +733,7 @@ function AppContent(): JSX.Element {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [appendMessage, clearParsingTimer, emit]);
+  }, [appendMessage, appendSystemMessage, clearParsingTimer, emit]);
 
   useEffect(() => {
     const handleSwitchTab = (event: Event) => {
@@ -617,6 +747,10 @@ function AppContent(): JSX.Element {
     window.addEventListener("postchat:switchTab", handleSwitchTab as EventListener);
     return () => window.removeEventListener("postchat:switchTab", handleSwitchTab as EventListener);
   }, [setAppTab]);
+
+  useEffect(() => {
+    vscode.postMessage({ command: "getCollectionData" });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -726,6 +860,34 @@ function AppContent(): JSX.Element {
     vscode.postMessage({ command: "loadCollection" });
   }, [clearParsingTimer]);
 
+  const handleSwitchCollection = useCallback(
+    (id: string) => {
+      if (!id || id === activeCollectionIdRef.current) {
+        return;
+      }
+      setError(undefined);
+      setSuggestions([]);
+      setHasSentFirstMessage(false);
+      setIsCollectionParsing(true);
+      clearParsingTimer();
+      parsingTimeoutRef.current = window.setTimeout(() => {
+        setIsCollectionParsing(false);
+        parsingTimeoutRef.current = null;
+      }, 8000);
+      vscode.postMessage({ command: "switchCollection", id });
+    },
+    [clearParsingTimer]
+  );
+
+  const handleRemoveCollection = useCallback((id: string) => {
+    if (!id) {
+      return;
+    }
+    setError(undefined);
+    setSuggestions([]);
+    vscode.postMessage({ command: "removeCollection", id });
+  }, []);
+
   const handleClearChat = useCallback(() => {
     setMessages([]);
     setIsThinking(false);
@@ -751,7 +913,7 @@ function AppContent(): JSX.Element {
 
   const handleTabChange = useCallback(
     (tab: AppTab) => {
-      if (tab === "explorer" && !collectionName && !isCollectionParsing) {
+      if (tab === "explorer" && !activeCollection && !isCollectionParsing) {
         setTabToastMessage("Load a Postman collection or OpenAPI spec to use the Explorer");
         if (tabToastTimeoutRef.current !== null) {
           window.clearTimeout(tabToastTimeoutRef.current);
@@ -766,7 +928,7 @@ function AppContent(): JSX.Element {
       setAppTab(tab);
       setTabToastMessage(undefined);
     },
-    [collectionName, isCollectionParsing, setAppTab]
+    [activeCollection, isCollectionParsing, setAppTab]
   );
 
   const handleConfigChange = useCallback((key: string, value: string) => {
@@ -808,24 +970,24 @@ function AppContent(): JSX.Element {
   );
 
   const showSuggestions = useMemo(
-    () => !hasSentFirstMessage && messages.filter((msg) => msg.role === "user").length === 0,
-    [hasSentFirstMessage, messages]
+    () => !hasSentFirstMessage && Boolean(activeCollectionId),
+    [activeCollectionId, hasSentFirstMessage]
   );
 
   return (
     <div className="flex flex-col h-screen bg-vscode-editorBg text-vscode-editorFg">
       <Header
         activeTab={activeTab}
-        collectionName={collectionName}
-        collectionPath={collectionPath}
-        collectionSpecType={collectionSpecType}
+        collections={collections}
+        activeCollectionId={activeCollectionId}
         isCollectionParsing={isCollectionParsing}
-        environmentName={environmentName}
         activeProvider={activeProvider}
         activeModel={activeModel}
         isSettingsOpen={isSettingsOpen}
         onTabChange={handleTabChange}
         onLoadCollection={handleLoadCollection}
+        onSwitchCollection={handleSwitchCollection}
+        onRemoveCollection={handleRemoveCollection}
         onLoadEnvironment={handleLoadEnvironment}
         onClearChat={handleClearChat}
         onSettingsToggle={handleSettingsToggle}
@@ -849,7 +1011,7 @@ function AppContent(): JSX.Element {
               pendingExecutionName={pendingExecution?.name ?? null}
               onRunRequest={handleRunRequestFromBubble}
               onSend={handleSend}
-              hasCollection={Boolean(collectionName)}
+              hasCollection={Boolean(activeCollectionId)}
               parsedCollection={parsedCollection}
               programmaticInput={programmaticInput}
               programmaticSendRequest={programmaticSendRequest}
@@ -865,6 +1027,7 @@ function AppContent(): JSX.Element {
         {activeTab === "explorer" ? (
           <div className="h-full transition-opacity duration-150 postchat-fade-in">
             <ExplorerPanel
+              key={activeCollectionId ?? "no-collection"}
               parsedCollection={parsedCollection}
               rawSpec={rawSpec}
               specType={specType}

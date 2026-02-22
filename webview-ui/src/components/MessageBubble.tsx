@@ -170,24 +170,25 @@ function extractEndpointMentions(text: string): ExtractedEndpointMention[] {
 export function MessageBubble({ message, onRunRequest, parsedCollection }: MessageBubbleProps): JSX.Element {
   const { emit } = useBridge();
   const isUser = message.role === "user";
+  const isSystem = message.role === "system";
   const markdownComponents = useMemo(() => createMarkdownComponents(!isUser), [isUser]);
 
   const endpointMatch = useMemo(() => {
-    if (isUser) {
+    if (isUser || isSystem) {
       return null;
     }
     return (
       HTTP_METHOD_URL_PATTERN.exec(message.text) ??
       SEPARATE_METHOD_URL_PATTERN.exec(message.text)
     );
-  }, [isUser, message.text]);
+  }, [isSystem, isUser, message.text]);
 
   const endpointMentions = useMemo(() => {
-    if (isUser || !parsedCollection) {
+    if (isUser || isSystem || !parsedCollection) {
       return [];
     }
     return extractEndpointMentions(message.text);
-  }, [isUser, message.text, parsedCollection]);
+  }, [isSystem, isUser, message.text, parsedCollection]);
 
   const handleRunRequest = useCallback(() => {
     if (endpointMatch && onRunRequest) {
@@ -221,12 +222,19 @@ export function MessageBubble({ message, onRunRequest, parsedCollection }: Messa
     <article
       className={[
         "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
+        isSystem ? "mx-auto max-w-full px-0 py-0 text-center" : "",
         isUser
           ? "ml-auto bg-vscode-buttonBg text-vscode-buttonFg"
-          : "mr-auto border border-vscode-panelBorder bg-vscode-card text-vscode-editorFg"
+          : isSystem
+            ? "border-none bg-transparent text-vscode-descriptionFg"
+            : "mr-auto border border-vscode-panelBorder bg-vscode-card text-vscode-editorFg"
       ].join(" ")}
     >
-      {isUser ? (
+      {isSystem ? (
+        <p className="rounded-full bg-vscode-inputBg px-3 py-1 text-[11px] text-vscode-descriptionFg">
+          {message.text}
+        </p>
+      ) : isUser ? (
         <p className="whitespace-pre-wrap break-words">{message.text}</p>
       ) : (
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>

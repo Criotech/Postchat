@@ -25,9 +25,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const requestTabProvider = new RequestTabProvider(
     context,
     () => viewProvider?.getResolvedParsedCollection() ?? null,
+    () => viewProvider?.getActiveEnvironment() ?? {},
     llmClient
   );
-  viewProvider = new PostchatViewProvider(context.extensionUri, requestTabProvider, context);
+  viewProvider = new PostchatViewProvider(context.extensionUri, requestTabProvider);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PostchatViewProvider.viewType, viewProvider)
