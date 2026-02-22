@@ -4,13 +4,15 @@ This is the README for your extension "postchat". After writing up a brief descr
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+⏺ Postchat is a VS Code extension that brings an AI-powered API client directly into your editor. It lets you:                                                               
+                                                                                                                                                                             
+  - Load Postman collections or OpenAPI/Swagger specs
+  - Chat with an AI assistant about your API — ask questions, find endpoints, understand authentication, and get usage examples                                              
+  - Explore endpoints in a structured browser with search and filtering                                                                                                      
+  - Send requests from a dedicated request tab with a full editor for headers, body, and parameters — and view syntax-highlighted responses                                  
+  - Combine AI + execution — ask the AI about an endpoint and jump straight into running it, or analyze a response with AI from the same panel                               
 
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+  It bridges the gap between API documentation and live testing, all without leaving VS Code.
 
 ## Explorer
 
