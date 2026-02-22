@@ -1,18 +1,18 @@
 # postchat README
 
-This is the README for your extension "postchat". After writing up a brief description, we recommend including the following sections.
+Postchat is a VS Code extension that brings an AI-powered API client directly into your editor.
 
 ## Features
 
-⏺ Postchat is a VS Code extension that brings an AI-powered API client directly into your editor. It lets you:                                                               
-                                                                                                                                                                             
-  - Load Postman collections or OpenAPI/Swagger specs
-  - Chat with an AI assistant about your API — ask questions, find endpoints, understand authentication, and get usage examples                                              
-  - Explore endpoints in a structured browser with search and filtering                                                                                                      
-  - Send requests from a dedicated request tab with a full editor for headers, body, and parameters — and view syntax-highlighted responses                                  
-  - Combine AI + execution — ask the AI about an endpoint and jump straight into running it, or analyze a response with AI from the same panel                               
+⏺ It lets you:
 
-  It bridges the gap between API documentation and live testing, all without leaving VS Code.
+- Load Postman collections or OpenAPI/Swagger specs
+- Chat with an AI assistant about your API — ask questions, find endpoints, understand authentication, and get usage examples
+- Explore endpoints in a structured browser with search and filtering
+- Send requests from a dedicated request tab with a full editor for headers, body, and parameters — and view syntax-highlighted responses
+- Combine AI + execution — ask the AI about an endpoint and jump straight into running it, or analyze a response with AI from the same panel
+
+It bridges the gap between API documentation and live testing, all without leaving VS Code.
 
 ## Explorer
 
@@ -59,8 +59,8 @@ For example:
 
 This extension contributes the following settings:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+- `myExtension.enable`: Enable/disable this extension.
+- `myExtension.thing`: Set to `blah` to do something.
 
 ## Known Issues
 
@@ -88,19 +88,19 @@ Added features X, Y, and Z.
 
 Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+- [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
 
 ## Working with Markdown
 
 You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+- Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
+- Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
+- Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
 
 ## For more information
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+- [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
+- [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
 
 **Enjoy!**
