@@ -38,8 +38,6 @@ type EndpointSidebarProps = {
 type MethodFilter = "ALL" | "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 const METHOD_FILTERS: MethodFilter[] = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"];
-const OPEN_HINT_STORAGE_KEY = "postchat.explorer.doubleClickHintDismissed";
-
 const METHOD_COLORS: Record<string, { text: string; bg: string; activeBg: string; border: string }> = {
   GET: { text: "text-blue-400", bg: "bg-blue-500/10", activeBg: "bg-blue-500/20", border: "border-blue-500/30" },
   POST: { text: "text-green-400", bg: "bg-green-500/10", activeBg: "bg-green-500/20", border: "border-green-500/30" },
@@ -79,22 +77,6 @@ function groupByFolder(endpoints: ParsedEndpoint[]): Array<[string, ParsedEndpoi
   return Array.from(grouped.entries());
 }
 
-function readHintDismissed(): boolean {
-  try {
-    return window.localStorage.getItem(OPEN_HINT_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeHintDismissed(): void {
-  try {
-    window.localStorage.setItem(OPEN_HINT_STORAGE_KEY, "1");
-  } catch {
-    // Ignore storage failures in restricted environments.
-  }
-}
-
 export function EndpointSidebar({
   endpoints,
   selectedId,
@@ -114,7 +96,6 @@ export function EndpointSidebar({
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMethods, setActiveMethods] = useState<Set<MethodFilter>>(() => new Set(["ALL"]));
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
-  const [showDoubleClickHint, setShowDoubleClickHint] = useState<boolean>(() => !readHintDismissed());
   const [recentCollapsed, setRecentCollapsed] = useState(true);
 
   const rowRefs = useRef<Record<string, HTMLLIElement | null>>({});
@@ -234,18 +215,13 @@ export function EndpointSidebar({
     setActiveMethods(new Set(["ALL"]));
   }, []);
 
-  const dismissDoubleClickHint = useCallback(() => {
-    setShowDoubleClickHint(false);
-    writeHintDismissed();
-  }, []);
-
-  const handleEndpointDoubleClick = useCallback(
+  const handleEndpointClick = useCallback(
     (endpoint: ParsedEndpoint) => {
-      dismissDoubleClickHint();
+      onSelect(endpoint);
       vscode.postMessage({ command: "openRequestTab", endpointId: endpoint.id });
       onOpenRequestTab(endpoint);
     },
-    [dismissDoubleClickHint, onOpenRequestTab]
+    [onOpenRequestTab, onSelect]
   );
 
   const handleRecentReopen = useCallback(
@@ -386,22 +362,6 @@ export function EndpointSidebar({
 
       {/* Scrollable endpoint list */}
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
-        {showDoubleClickHint ? (
-          <div className="mx-2 mb-1.5 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[11px] text-vscode-descriptionFg"
-            style={{ background: "var(--vscode-editorWidget-background)" }}
-          >
-            <span className="flex-1">Double-click to open as tab</span>
-            <button
-              type="button"
-              onClick={dismissDoubleClickHint}
-              className="rounded p-0.5 hover:bg-vscode-listHover"
-              aria-label="Dismiss hint"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        ) : null}
-
         {groupedEndpoints.length === 0 ? (
           <div className="px-3 py-4 text-center">
             <p className="text-xs text-vscode-descriptionFg">
@@ -468,8 +428,7 @@ export function EndpointSidebar({
                         ref={(node) => {
                           rowRefs.current[endpoint.id] = node;
                         }}
-                        onClick={() => onSelect(endpoint)}
-                        onDoubleClick={() => handleEndpointDoubleClick(endpoint)}
+                        onClick={() => handleEndpointClick(endpoint)}
                         className={[
                           "group relative cursor-pointer pl-7 pr-2 py-[5px]",
                           pulsing ? "postchat-endpoint-pulse" : "",
