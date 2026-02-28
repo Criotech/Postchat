@@ -2,6 +2,71 @@ import type { ParsedEndpoint, ParsedCollection } from '../specParser/types';
 import type { AnalyzedQuery } from './queryAnalyzer';
 import type { SearchResult } from './bm25Index';
 
+// ─── HISTORY-ONLY CONTEXT ────────────────────────────────────
+
+export function extractPathMentions(
+  history: { role: string; content: string }[],
+): string[] {
+  const paths = new Set<string>();
+  const methodPathRe = /\b(GET|POST|PUT|PATCH|DELETE)\s+(\/[a-z][a-z0-9\-/{}]*)/gi;
+  const barePathRe = /`(\/[a-z][a-z0-9\-/{}]*)`/gi;
+
+  for (const msg of history) {
+    let match: RegExpExecArray | null;
+    // eslint-disable-next-line no-cond-assign
+    while ((match = methodPathRe.exec(msg.content)) !== null) {
+      paths.add(match[2]);
+    }
+    // eslint-disable-next-line no-cond-assign
+    while ((match = barePathRe.exec(msg.content)) !== null) {
+      paths.add(match[1]);
+    }
+  }
+
+  return Array.from(paths);
+}
+
+export function buildHistoryOnlyContext(
+  history: { role: string; content: string }[],
+  collection: ParsedCollection,
+): { markdown: string; matchedEndpoints: number } {
+  const mentionedPaths = extractPathMentions(history);
+
+  if (mentionedPaths.length === 0) {
+    return { markdown: '', matchedEndpoints: 0 };
+  }
+
+  // Find endpoints matching mentioned paths
+  const matched: ParsedEndpoint[] = [];
+  for (const path of mentionedPaths) {
+    for (const ep of collection.endpoints) {
+      if (ep.path.toLowerCase() === path.toLowerCase()) {
+        if (!matched.some(m => m.id === ep.id)) {
+          matched.push(ep);
+        }
+      }
+    }
+  }
+
+  if (matched.length === 0) {
+    return { markdown: '', matchedEndpoints: 0 };
+  }
+
+  // Build a minimal context with just the matched endpoints as summaries
+  const lines: string[] = [
+    `# ${collection.title} API (conversation context)`,
+    `Base URL: \`${collection.baseUrl}\``,
+    '',
+    '## Previously discussed endpoints',
+  ];
+
+  for (const ep of matched.slice(0, 5)) {
+    lines.push(formatEndpointSummary(ep));
+  }
+
+  return { markdown: lines.join('\n'), matchedEndpoints: matched.length };
+}
+
 // ─── TOKEN BUDGET CONSTANTS ───────────────────────────────────
 
 const TOKEN_BUDGETS = {

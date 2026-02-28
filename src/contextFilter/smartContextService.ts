@@ -3,7 +3,8 @@ import type { ParsedCollection, ParsedEndpoint } from '../specParser/types';
 import { collectionToMarkdown } from '../specParser';
 import { analyzeQuery, isFollowUpQuery, extractSearchableFragment, type AnalyzedQuery } from './queryAnalyzer';
 import { getOrBuildIndex, searchIndex, invalidateIndex, type SearchResult } from './bm25Index';
-import { buildContext, estimateTokens } from './contextBuilder';
+import { buildContext, buildHistoryOnlyContext, estimateTokens } from './contextBuilder';
+import { shouldSendContext, type ContextDecision } from './contextGate';
 
 // ─── TYPES ─────────────────────────────────────────────────────
 
@@ -16,11 +17,12 @@ export type ContextFilterStats = {
   estimatedCostSavingPercent: number;
   processingTimeMs: number;
   budgetMode: string;
+  gateDecision: ContextDecision;
 };
 
 export type ContextFilterResult = {
   contextMarkdown: string;
-  analyzedQuery: AnalyzedQuery;
+  analyzedQuery: AnalyzedQuery | null;
   stats: ContextFilterStats;
 };
 
@@ -269,6 +271,48 @@ export class SmartContextService {
     const collection = this.currentCollection;
     const settings = readFilterSettings();
 
+    // ── Context Gate: decide if context is needed at all ──
+    const gateDecision = shouldSendContext(userMessage, conversationHistory);
+
+    if (gateDecision === 'none') {
+      console.log('[Postchat] Context gate: none — skipping collection context');
+      return {
+        contextMarkdown: '',
+        analyzedQuery: null,
+        stats: {
+          totalEndpoints: collection.endpoints.length,
+          sentFull: 0,
+          sentSummary: 0,
+          excluded: collection.endpoints.length,
+          estimatedInputTokens: 0,
+          estimatedCostSavingPercent: 100,
+          processingTimeMs: Date.now() - startTime,
+          budgetMode: 'none',
+          gateDecision: 'none',
+        },
+      };
+    }
+
+    if (gateDecision === 'history') {
+      console.log('[Postchat] Context gate: history — using conversation context only');
+      const historyContext = buildHistoryOnlyContext(conversationHistory, collection);
+      return {
+        contextMarkdown: historyContext.markdown,
+        analyzedQuery: null,
+        stats: {
+          totalEndpoints: collection.endpoints.length,
+          sentFull: 0,
+          sentSummary: historyContext.matchedEndpoints,
+          excluded: collection.endpoints.length - historyContext.matchedEndpoints,
+          estimatedInputTokens: estimateTokens(historyContext.markdown),
+          estimatedCostSavingPercent: 100,
+          processingTimeMs: Date.now() - startTime,
+          budgetMode: 'history',
+          gateDecision: 'history',
+        },
+      };
+    }
+
     // ── Setting: filter disabled → send full collection ──
     if (!settings.enabled) {
       const markdown = this.getFullCollectionMarkdown();
@@ -356,6 +400,7 @@ export class SmartContextService {
         estimatedCostSavingPercent: Math.max(0, savingPercent),
         processingTimeMs,
         budgetMode,
+        gateDecision: 'filter',
       },
     };
   }
@@ -400,6 +445,7 @@ export class SmartContextService {
         estimatedCostSavingPercent: 0,
         processingTimeMs: Date.now() - startTime,
         budgetMode: 'full',
+        gateDecision: 'filter',
       },
     };
   }
