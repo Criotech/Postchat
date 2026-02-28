@@ -5,7 +5,7 @@ import type { ExecutableRequest, ExecutionResult } from "./RequestResult";
 // import { SecretsWarningModal } from "./SecretsWarningModal";
 import { SettingsPanel } from "./SettingsPanel";
 import { SuggestedPrompts } from "./SuggestedPrompts";
-import { TokenStatusBar, type TokenUsage } from "./TokenStatusBar";
+import { TokenStatusBar, type TokenUsage, type ContextFilterStats } from "./TokenStatusBar";
 import type { Message } from "../types";
 import type { ParsedCollection } from "../types/spec";
 
@@ -40,6 +40,7 @@ type ChatPanelProps = {
   onProgrammaticSendConsumed: () => void;
   tokenUsage: TokenUsage;
   activeProvider: string;
+  contextStats: ContextFilterStats | null;
   // isSecretsModalOpen: boolean;
   // secretFindings: SecretFinding[];
   // onConfirmSend: () => void;
@@ -67,7 +68,8 @@ export function ChatPanel({
   programmaticSendRequest,
   onProgrammaticSendConsumed,
   tokenUsage,
-  activeProvider
+  activeProvider,
+  contextStats
   // isSecretsModalOpen,
   // secretFindings,
   // onConfirmSend,
@@ -111,7 +113,7 @@ export function ChatPanel({
         onProgrammaticSendConsumed={onProgrammaticSendConsumed}
       />
 
-      <TokenStatusBar usage={tokenUsage} provider={activeProvider} />
+      <TokenStatusBar usage={tokenUsage} provider={activeProvider} contextStats={contextStats} />
 
       {/* isSecretsModalOpen ? (
         <SecretsWarningModal

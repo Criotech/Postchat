@@ -36,6 +36,7 @@
     "onCommand:postchat.openRequestTab",
     "onCommand:postchat.runCurrentTab",
     "onCommand:postchat.closeAllRequestTabs",
+    "onCommand:postchat.debugContext",
     "onView:postchatView"
   ],
   "main": "./out/extension.js",
@@ -56,6 +57,10 @@
       {
         "command": "postchat.closeAllRequestTabs",
         "title": "Postchat: Close All Request Tabs"
+      },
+      {
+        "command": "postchat.debugContext",
+        "title": "Postchat: Debug Context Filter"
       }
     ],
     "keybindings": [

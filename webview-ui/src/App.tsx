@@ -4,7 +4,7 @@ import { ExplorerPanel } from "./components/ExplorerPanel";
 import { Header } from "./components/Header";
 import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
 import type { ConfigValues } from "./components/SettingsPanel";
-import type { TokenUsage } from "./components/TokenStatusBar";
+import type { TokenUsage, ContextFilterStats } from "./components/TokenStatusBar";
 import { useBridgeListener } from "./hooks/useBridgeListener";
 import { BridgeProvider, useBridge } from "./lib/explorerBridge";
 import { resolveSlashCommand } from "./lib/slashCommands";
@@ -113,7 +113,8 @@ type IncomingMessage =
       ollamaEndpoint: string;
       ollamaModel: string;
     }
-  | { command: "tokenUsageUpdated"; usage: TokenUsage };
+  | { command: "tokenUsageUpdated"; usage: TokenUsage }
+  | { command: "contextFilterStats"; stats: ContextFilterStats };
 
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -374,6 +375,7 @@ function AppContent(): JSX.Element {
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
   const [isCollectionParsing, setIsCollectionParsing] = useState(false);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage>(EMPTY_TOKEN_USAGE);
+  const [contextStats, setContextStats] = useState<ContextFilterStats | null>(null);
 
   const [programmaticInput, setProgrammaticInput] = useState<string | null>(null);
   const [programmaticSendRequest, setProgrammaticSendRequest] = useState<ProgrammaticSendRequest | null>(null);
@@ -672,6 +674,9 @@ function AppContent(): JSX.Element {
         case "tokenUsageUpdated":
           setTokenUsage(message.usage);
           break;
+        case "contextFilterStats":
+          setContextStats(message.stats);
+          break;
         case "clearChat":
           setMessages([]);
           setError(undefined);
@@ -688,6 +693,7 @@ function AppContent(): JSX.Element {
           bridgeRequestEndpointMapRef.current = {};
           setIsCollectionParsing(false);
           setTokenUsage(EMPTY_TOKEN_USAGE);
+          setContextStats(null);
           clearParsingTimer();
           break;
         case "requestStarted":
@@ -904,6 +910,7 @@ function AppContent(): JSX.Element {
     setProgrammaticInput(null);
     setProgrammaticSendRequest(null);
     setTokenUsage(EMPTY_TOKEN_USAGE);
+    setContextStats(null);
     bridgeRequestEndpointMapRef.current = {};
     vscode.postMessage({ command: "clearChat" });
   }, [clearParsingTimer]);
@@ -1024,6 +1031,7 @@ function AppContent(): JSX.Element {
               onProgrammaticSendConsumed={() => setProgrammaticSendRequest(null)}
               tokenUsage={tokenUsage}
               activeProvider={activeProvider}
+              contextStats={contextStats}
               // isSecretsModalOpen={isSecretsModalOpen}
               // secretFindings={secretFindings}
               // onConfirmSend={handleConfirmSend}
