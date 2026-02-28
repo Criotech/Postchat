@@ -1,7 +1,11 @@
-import type { ParsedCollection } from '../specParser/types';
-import { analyzeQuery, type AnalyzedQuery } from './queryAnalyzer';
+import * as vscode from 'vscode';
+import type { ParsedCollection, ParsedEndpoint } from '../specParser/types';
+import { collectionToMarkdown } from '../specParser';
+import { analyzeQuery, isFollowUpQuery, extractSearchableFragment, type AnalyzedQuery } from './queryAnalyzer';
 import { getOrBuildIndex, searchIndex, invalidateIndex, type SearchResult } from './bm25Index';
 import { buildContext, estimateTokens } from './contextBuilder';
+
+// ─── TYPES ─────────────────────────────────────────────────────
 
 export type ContextFilterStats = {
   totalEndpoints: number;
@@ -20,30 +24,222 @@ export type ContextFilterResult = {
   stats: ContextFilterStats;
 };
 
+// ─── CONSTANTS ─────────────────────────────────────────────────
+
+const SMALL_COLLECTION_THRESHOLD = 10;
+const HISTORY_SCAN_DEPTH = 6;
+const CONTINUITY_BOOST = 1.4;
+
+// ─── CONVERSATION HISTORY AWARENESS ───────────────────────────
+
+function extractMentionedEndpoints(
+  history: { role: string; content: string }[],
+  collection: ParsedCollection,
+): string[] {
+  const recentMessages = history.slice(-HISTORY_SCAN_DEPTH);
+  if (recentMessages.length === 0) { return []; }
+
+  const combined = recentMessages.map(m => m.content).join('\n').toLowerCase();
+  const matchedIds = new Set<string>();
+
+  // Build a lowercase name map for efficient lookup
+  const endpointsByName = new Map<string, string>();
+  for (const ep of collection.endpoints) {
+    endpointsByName.set(ep.name.toLowerCase(), ep.id);
+  }
+
+  // Scan for endpoint name mentions
+  endpointsByName.forEach((id, name) => {
+    if (combined.includes(name)) {
+      matchedIds.add(id);
+    }
+  });
+
+  // Scan for method + path patterns: "GET /users", "POST /auth/login" etc.
+  const methodPathMatches = combined.match(/\b(get|post|put|patch|delete)\s+\/[a-z][a-z0-9\-/{}]*/gi) || [];
+  for (const match of methodPathMatches) {
+    const parts = match.trim().split(/\s+/);
+    if (parts.length < 2) { continue; }
+    const method = parts[0].toUpperCase();
+    const path = parts[1];
+    for (const ep of collection.endpoints) {
+      if (ep.method === method && ep.path.toLowerCase() === path.toLowerCase()) {
+        matchedIds.add(ep.id);
+      }
+    }
+  }
+
+  // Scan for bare URL path patterns
+  const pathMatches = combined.match(/\/[a-z][a-z0-9\-/{}]*/gi) || [];
+  for (const pathMatch of pathMatches) {
+    for (const ep of collection.endpoints) {
+      if (ep.path.toLowerCase() === pathMatch.toLowerCase()) {
+        matchedIds.add(ep.id);
+      }
+    }
+  }
+
+  return Array.from(matchedIds);
+}
+
+function boostMentionedEndpoints(
+  results: SearchResult[],
+  mentionedIds: string[],
+): SearchResult[] {
+  if (mentionedIds.length === 0) { return results; }
+  const idSet = new Set(mentionedIds);
+  return results.map(r => {
+    if (idSet.has(r.endpoint.id)) {
+      return { ...r, score: r.score * CONTINUITY_BOOST };
+    }
+    return r;
+  });
+}
+
+// ─── FOLLOW-UP HANDLING ───────────────────────────────────────
+
+function getLastDiscussedEndpoint(
+  history: { role: string; content: string }[],
+  collection: ParsedCollection,
+): ParsedEndpoint | null {
+  // Walk backwards through assistant messages to find the last endpoint discussed
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role !== 'assistant') { continue; }
+    const content = history[i].content.toLowerCase();
+
+    for (const ep of collection.endpoints) {
+      // Check for method + path in the assistant response
+      const signature = `${ep.method.toLowerCase()} ${ep.path.toLowerCase()}`;
+      if (content.includes(signature) || content.includes(ep.name.toLowerCase())) {
+        return ep;
+      }
+    }
+  }
+  return null;
+}
+
+function mergeFollowUpResults(
+  previousEndpoint: ParsedEndpoint,
+  newResults: SearchResult[],
+): SearchResult[] {
+  // If the previous endpoint is already in results, boost it
+  const existing = newResults.find(r => r.endpoint.id === previousEndpoint.id);
+  if (existing) {
+    return newResults.map(r => {
+      if (r.endpoint.id === previousEndpoint.id) {
+        return { ...r, score: r.score * 2.0 };
+      }
+      return r;
+    });
+  }
+
+  // Otherwise inject it at the top with a high score
+  const topScore = newResults.length > 0 ? newResults[0].score : 1.0;
+  return [
+    {
+      endpoint: previousEndpoint,
+      score: topScore * 1.5,
+      matchedTerms: ['(follow-up)'],
+      matchedFields: [],
+    },
+    ...newResults,
+  ];
+}
+
+// ─── BUDGET MODE ──────────────────────────────────────────────
+
 function determineBudgetMode(
   query: AnalyzedQuery,
   _history: { role: string; content: string }[],
 ): 'conservative' | 'balanced' | 'generous' {
-  // Generous: complex queries that likely need more context
   if (query.isGlobalQuery) { return 'generous'; }
   if (query.intent === 'compare_endpoints') { return 'generous'; }
   if (query.intent === 'understand_auth') { return 'generous'; }
 
-  // Conservative: highly specific single-endpoint queries
   if (query.isSingleEndpointQuery) { return 'conservative'; }
   if (query.intent === 'run_request') { return 'conservative'; }
 
-  // Balanced: everything else
   return 'balanced';
 }
 
+// ─── SETTINGS ─────────────────────────────────────────────────
+
+function readFilterSettings(): {
+  enabled: boolean;
+  budgetOverride: 'conservative' | 'balanced' | 'generous' | 'auto';
+} {
+  const config = vscode.workspace.getConfiguration('postchat');
+  const enabled = config.get<boolean>('contextFilter.enabled', true);
+  const budget = config.get<string>('contextFilter.budgetMode', 'auto');
+
+  let budgetOverride: 'conservative' | 'balanced' | 'generous' | 'auto' = 'auto';
+  if (budget === 'conservative' || budget === 'balanced' || budget === 'generous') {
+    budgetOverride = budget;
+  }
+
+  return { enabled, budgetOverride };
+}
+
+// ─── ZERO-RESULT FALLBACK ─────────────────────────────────────
+
+function searchWithFallback(
+  index: ReturnType<typeof getOrBuildIndex>,
+  analyzedQuery: AnalyzedQuery,
+): SearchResult[] {
+  // First attempt: full query
+  let results = searchIndex(index, analyzedQuery, {
+    topK: 15,
+    minScore: 0.1,
+    methodFilter: analyzedQuery.methodHint,
+    boostEntityTerms: true,
+  });
+
+  if (results.length > 0) { return results; }
+
+  // Second attempt: entity terms only (drop verbs and common words)
+  if (analyzedQuery.entityTerms.length > 0) {
+    const entityOnlyQuery: AnalyzedQuery = {
+      ...analyzedQuery,
+      keywords: analyzedQuery.entityTerms,
+      methodHint: 'any',
+    };
+    results = searchIndex(index, entityOnlyQuery, {
+      topK: 15,
+      minScore: 0.05,
+      boostEntityTerms: true,
+    });
+    if (results.length > 0) { return results; }
+  }
+
+  // Third attempt: just the first keyword
+  if (analyzedQuery.keywords.length > 0) {
+    const singleKeywordQuery: AnalyzedQuery = {
+      ...analyzedQuery,
+      keywords: [analyzedQuery.keywords[0]],
+      entityTerms: [],
+      methodHint: 'any',
+    };
+    results = searchIndex(index, singleKeywordQuery, {
+      topK: 15,
+      minScore: 0.01,
+    });
+    if (results.length > 0) { return results; }
+  }
+
+  // All attempts failed — return empty, caller will send global summary
+  return [];
+}
+
+// ─── SERVICE CLASS ────────────────────────────────────────────
+
 export class SmartContextService {
   private currentCollection: ParsedCollection | null = null;
+  private fullCollectionMarkdown: string | null = null;
 
   setCollection(collection: ParsedCollection): void {
     this.currentCollection = collection;
-    // Pre-build the index immediately on collection load.
-    // Uses setTimeout so it doesn't block the caller.
+    this.fullCollectionMarkdown = null;
+    // Pre-build the index asynchronously
     setTimeout(() => {
       getOrBuildIndex(collection);
       console.log(
@@ -58,6 +254,7 @@ export class SmartContextService {
       invalidateIndex(this.currentCollection.title);
     }
     this.currentCollection = null;
+    this.fullCollectionMarkdown = null;
   }
 
   getContextForQuery(
@@ -70,27 +267,65 @@ export class SmartContextService {
 
     const startTime = Date.now();
     const collection = this.currentCollection;
+    const settings = readFilterSettings();
+
+    // ── Setting: filter disabled → send full collection ──
+    if (!settings.enabled) {
+      const markdown = this.getFullCollectionMarkdown();
+      return this.buildDisabledResult(markdown, userMessage, startTime);
+    }
+
+    // ── Small collection shortcut (<10 endpoints) ──
+    if (collection.endpoints.length < SMALL_COLLECTION_THRESHOLD) {
+      console.log('[Postchat] Small collection (<10 endpoints) — skipping filter');
+      const markdown = this.getFullCollectionMarkdown();
+      return this.buildDisabledResult(markdown, userMessage, startTime);
+    }
+
+    // ── Very long user message → extract searchable fragment ──
+    const searchMessage = extractSearchableFragment(userMessage);
 
     // Step 1: Analyze the query
-    const analyzedQuery = analyzeQuery(userMessage);
+    const analyzedQuery = analyzeQuery(searchMessage);
 
-    // Step 2: Determine budget mode based on query complexity
-    const budgetMode = determineBudgetMode(analyzedQuery, conversationHistory);
+    // Step 2: Determine budget mode
+    let budgetMode: 'conservative' | 'balanced' | 'generous';
+    if (settings.budgetOverride !== 'auto') {
+      budgetMode = settings.budgetOverride;
+    } else {
+      budgetMode = determineBudgetMode(analyzedQuery, conversationHistory);
+    }
 
-    // Step 3: Get or build the BM25 index (from cache if available)
+    // Step 3: Get the BM25 index
     const index = getOrBuildIndex(collection);
 
-    // Step 4: Search the index
-    const searchResults = analyzedQuery.isGlobalQuery
-      ? []
-      : searchIndex(index, analyzedQuery, {
-          topK: 15,
-          minScore: 0.1,
-          methodFilter: analyzedQuery.methodHint,
-          boostEntityTerms: true,
-        });
+    // Step 4: Check for follow-up queries
+    const isFollowUp = isFollowUpQuery(searchMessage, conversationHistory);
 
-    // Step 5: Build the tiered context
+    // Step 5: Search the index (with fallback for zero results)
+    let searchResults: SearchResult[];
+    if (analyzedQuery.isGlobalQuery) {
+      searchResults = [];
+    } else {
+      searchResults = searchWithFallback(index, analyzedQuery);
+    }
+
+    // Step 6: Boost previously-mentioned endpoints for continuity
+    const mentionedIds = extractMentionedEndpoints(conversationHistory, collection);
+    searchResults = boostMentionedEndpoints(searchResults, mentionedIds);
+
+    // Step 7: Handle follow-up — merge previous endpoint into results
+    if (isFollowUp) {
+      const lastEndpoint = getLastDiscussedEndpoint(conversationHistory, collection);
+      if (lastEndpoint) {
+        searchResults = mergeFollowUpResults(lastEndpoint, searchResults);
+      }
+    }
+
+    // Re-sort after boosts and merges
+    searchResults.sort((a, b) => b.score - a.score);
+
+    // Step 8: Build the tiered context
     const builtContext = buildContext({
       query: analyzedQuery,
       searchResults,
@@ -98,7 +333,7 @@ export class SmartContextService {
       budgetMode,
     });
 
-    // Step 6: Calculate savings vs full collection
+    // Step 9: Calculate savings
     const fullCollectionTokens = estimateTokens(
       collection.endpoints.map(e => e.name + e.path + (e.description || '')).join(' '),
     ) * 3;
@@ -135,5 +370,37 @@ export class SmartContextService {
     const index = getOrBuildIndex(collection);
     const topResults = searchIndex(index, analysis, { topK: 10, minScore: 0 });
     return { analysis, topResults };
+  }
+
+  // ─── PRIVATE HELPERS ──────────────────────────────────────────
+
+  private getFullCollectionMarkdown(): string {
+    if (!this.currentCollection) { return ''; }
+    if (!this.fullCollectionMarkdown) {
+      this.fullCollectionMarkdown = collectionToMarkdown(this.currentCollection);
+    }
+    return this.fullCollectionMarkdown;
+  }
+
+  private buildDisabledResult(
+    markdown: string,
+    userMessage: string,
+    startTime: number,
+  ): ContextFilterResult {
+    const collection = this.currentCollection!;
+    return {
+      contextMarkdown: markdown,
+      analyzedQuery: analyzeQuery(userMessage),
+      stats: {
+        totalEndpoints: collection.endpoints.length,
+        sentFull: collection.endpoints.length,
+        sentSummary: 0,
+        excluded: 0,
+        estimatedInputTokens: estimateTokens(markdown),
+        estimatedCostSavingPercent: 0,
+        processingTimeMs: Date.now() - startTime,
+        budgetMode: 'full',
+      },
+    };
   }
 }

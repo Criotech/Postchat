@@ -171,6 +171,76 @@ export function buildIndex(collection: ParsedCollection): BM25Index {
   };
 }
 
+// ─── ASYNC INDEX BUILDER (large collections) ──────────────────
+
+const CHUNK_SIZE = 50;
+const ASYNC_THRESHOLD = 200;
+
+function buildDocument(endpoint: ParsedEndpoint): IndexedDocument {
+  const terms = tokenizeEndpoint(endpoint);
+  let length = 0;
+  terms.forEach(freq => { length += freq; });
+  return { id: endpoint.id, endpoint, terms, length };
+}
+
+function computeIdf(documents: IndexedDocument[], totalDocs: number): Map<string, number> {
+  const docFrequency = new Map<string, number>();
+  for (const doc of documents) {
+    doc.terms.forEach((_freq, term) => {
+      docFrequency.set(term, (docFrequency.get(term) ?? 0) + 1);
+    });
+  }
+
+  const idf = new Map<string, number>();
+  docFrequency.forEach((df, term) => {
+    idf.set(term, Math.log((totalDocs - df + 0.5) / (df + 0.5) + 1));
+  });
+  return idf;
+}
+
+function finalizeIndex(
+  documents: IndexedDocument[],
+  idf: Map<string, number>,
+  collection: ParsedCollection,
+): BM25Index {
+  const totalDocs = documents.length;
+  const avgDocLength = totalDocs > 0
+    ? documents.reduce((sum, d) => sum + d.length, 0) / totalDocs
+    : 1;
+
+  return {
+    documents,
+    avgDocLength,
+    idf,
+    totalDocs,
+    collectionId: collectionHash(collection),
+    builtAt: Date.now(),
+  };
+}
+
+export async function buildIndexAsync(collection: ParsedCollection): Promise<BM25Index> {
+  const endpoints = collection.endpoints;
+
+  if (endpoints.length <= ASYNC_THRESHOLD) {
+    return buildIndex(collection);
+  }
+
+  const documents: IndexedDocument[] = [];
+  for (let i = 0; i < endpoints.length; i += CHUNK_SIZE) {
+    const chunk = endpoints.slice(i, i + CHUNK_SIZE);
+    for (const ep of chunk) {
+      documents.push(buildDocument(ep));
+    }
+    // Yield control back to the event loop between chunks
+    if (i + CHUNK_SIZE < endpoints.length) {
+      await new Promise<void>(resolve => { setTimeout(resolve, 0); });
+    }
+  }
+
+  const idf = computeIdf(documents, documents.length);
+  return finalizeIndex(documents, idf, collection);
+}
+
 // ─── SEARCH ────────────────────────────────────────────────────
 
 export function searchIndex(
@@ -211,8 +281,22 @@ export function searchIndex(
 
   // Score each document
   const scored: SearchResult[] = [];
+  const useEarlyTermination = index.totalDocs > 500;
+  const earlyTermCheckInterval = 100;
+  const earlyTermScoreThreshold = 5.0;
 
-  for (const doc of index.documents) {
+  for (let docIdx = 0; docIdx < index.documents.length; docIdx++) {
+    // Early termination for very large collections (simplified WAND)
+    if (useEarlyTermination && docIdx > 0 && docIdx % earlyTermCheckInterval === 0) {
+      if (scored.length >= topK) {
+        scored.sort((a, b) => b.score - a.score);
+        if (scored[0].score > earlyTermScoreThreshold) {
+          break;
+        }
+      }
+    }
+
+    const doc = index.documents[docIdx];
     let score = 0;
     const matchedTerms: string[] = [];
     const matchedFields: string[] = [];
@@ -318,6 +402,32 @@ export function getOrBuildIndex(collection: ParsedCollection): BM25Index {
   }
 
   const index = buildIndex(collection);
+  indexCache.set(id, index);
+  return index;
+}
+
+export async function getOrBuildIndexAsync(collection: ParsedCollection): Promise<BM25Index> {
+  const id = collectionHash(collection);
+
+  const cached = indexCache.get(id);
+  if (cached) { return cached; }
+
+  // LRU eviction
+  if (indexCache.size >= MAX_CACHE_SIZE) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    indexCache.forEach((idx, key) => {
+      if (idx.builtAt < oldestTime) {
+        oldestTime = idx.builtAt;
+        oldestKey = key;
+      }
+    });
+    if (oldestKey) {
+      indexCache.delete(oldestKey);
+    }
+  }
+
+  const index = await buildIndexAsync(collection);
   indexCache.set(id, index);
   return index;
 }

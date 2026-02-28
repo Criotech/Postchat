@@ -125,6 +125,24 @@
           "default": "gpt-4o",
           "description": "Which OpenAI model to use",
           "scope": "application"
+        },
+        "postchat.contextFilter.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use smart context filtering to reduce token usage. Disable to always send the full collection.",
+          "scope": "application"
+        },
+        "postchat.contextFilter.budgetMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "conservative",
+            "balanced",
+            "generous"
+          ],
+          "default": "auto",
+          "description": "Token budget for context filtering. Auto = Postchat decides based on query type. Conservative = ~2000 tokens (cheapest). Balanced = ~4000 tokens (recommended). Generous = ~8000 tokens (most accurate).",
+          "scope": "application"
         }
       }
     },

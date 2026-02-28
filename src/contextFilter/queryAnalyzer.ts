@@ -228,6 +228,63 @@ export function analyzeQuery(userMessage: string): AnalyzedQuery {
   };
 }
 
+// ─── FOLLOW-UP DETECTION ──────────────────────────────────────
+
+const FOLLOWUP_SIGNALS = [
+  'what about', 'and the', 'how about', 'what if', 'also',
+  'same for', 'similar to', 'like that', 'that one', 'this one',
+  'can you also', 'and also', 'additionally',
+];
+
+export function isFollowUpQuery(
+  userMessage: string,
+  history: { role: string; content: string }[],
+): boolean {
+  if (history.length === 0) { return false; }
+
+  const words = userMessage.trim().split(/\s+/);
+  if (words.length >= 8) { return false; }
+
+  const lower = userMessage.toLowerCase().trim();
+
+  // Check for follow-up signal phrases
+  if (FOLLOWUP_SIGNALS.some(s => lower.startsWith(s))) {
+    return true;
+  }
+
+  // Very short message with no path patterns and no nouns is a follow-up
+  if (words.length <= 3) {
+    const hasPath = /\/[a-z][a-z0-9\-/{}]*/i.test(userMessage);
+    if (!hasPath) { return true; }
+  }
+
+  return false;
+}
+
+// ─── LONG MESSAGE EXTRACTION ──────────────────────────────────
+
+const MAX_SEARCH_MESSAGE_LENGTH = 500;
+
+export function extractSearchableFragment(userMessage: string): string {
+  if (userMessage.length <= MAX_SEARCH_MESSAGE_LENGTH) {
+    return userMessage;
+  }
+
+  // Try extracting the last question sentence
+  const sentences = userMessage.split(/[.!?\n]+/).filter(s => s.trim().length > 0);
+  const questions = sentences.filter(s => s.trim().includes('?') || /^(how|what|where|why|which|can|does|is|show|find|get)/i.test(s.trim()));
+  if (questions.length > 0) {
+    return questions[questions.length - 1].trim();
+  }
+
+  // Fall back to the first sentence
+  if (sentences.length > 0) {
+    return sentences[0].trim().slice(0, MAX_SEARCH_MESSAGE_LENGTH);
+  }
+
+  return userMessage.slice(0, MAX_SEARCH_MESSAGE_LENGTH);
+}
+
 // ─── DEBUG HELPER ──────────────────────────────────────────────
 
 export function formatQuerySummary(query: AnalyzedQuery): string {
