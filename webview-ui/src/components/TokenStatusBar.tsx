@@ -74,7 +74,9 @@ export function TokenStatusBar({ usage, provider, contextStats }: TokenStatusBar
             <p>Endpoints sent: {contextStats.sentFull} full</p>
             <p className="ml-[97px]">{contextStats.sentSummary} summary</p>
             <p className="ml-[97px]">{contextStats.excluded} excluded</p>
-            <p>Est. tokens: ~{formatTokens(contextStats.estimatedInputTokens)}</p>
+            <p>Input: {formatTokens(usage.inputTokens)} tokens</p>
+            <p>Output: {formatTokens(usage.outputTokens)} tokens</p>
+            <p>Est. context: ~{formatTokens(contextStats.estimatedInputTokens)} tokens</p>
             {!isOllama ? (
               <p>Est. cost: {formatEstimatedCost(usage.estimatedCostUsd)}</p>
             ) : null}
