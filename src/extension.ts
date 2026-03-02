@@ -6,6 +6,7 @@ import type { ParsedEndpoint } from "./specParser";
 import { formatQuerySummary } from "./contextFilter/queryAnalyzer";
 import { SourceRegistry } from "./integration";
 import { setupPostmanCloud } from "./integration/sources/postmanCloudSetup";
+import { setupUrlSource } from "./integration/sources/urlSource";
 import { autoDetectAndRegister } from "./integration/sources/workspaceSource";
 
 function isParsedEndpoint(value: unknown): value is ParsedEndpoint {
@@ -37,7 +38,6 @@ export function activate(context: vscode.ExtensionContext): void {
   // ─── SOURCE REGISTRY ─────────────────────────────────────
   const registry = new SourceRegistry(context);
 
-  // TODO (INT-03): Instantiate and register UrlImportSource
   // TODO (INT-04): Instantiate and register WatchedFileSource
   // TODO (INT-05): Instantiate and register GitTrackedSource
 
@@ -243,6 +243,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const importFromUrlCommand = vscode.commands.registerCommand(
+    "postchat.importFromUrl",
+    async () => {
+      const source = await setupUrlSource();
+      if (!source) {
+        return;
+      }
+
+      registry.register(source);
+      const result = await registry.activate(source.getSourceInfo().id);
+      if (result.success) {
+        void vscode.window.showInformationMessage(
+          `Postchat: Loaded collection from ${source.getSourceInfo().label}.`
+        );
+      } else {
+        void vscode.window.showErrorMessage(
+          `Postchat: Failed to load URL: ${result.error ?? "Unknown error"}`
+        );
+      }
+    }
+  );
+
   context.subscriptions.push(
     startCommand,
     openRequestTabCommand,
@@ -252,6 +274,7 @@ export function activate(context: vscode.ExtensionContext): void {
     manageSourcesCommand,
     detectCollectionsCommand,
     connectPostmanCommand,
+    importFromUrlCommand,
     registry,
     { dispose: () => requestTabProvider.closeAllTabs() }
   );

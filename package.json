@@ -40,6 +40,7 @@
     "onCommand:postchat.manageSources",
     "onCommand:postchat.connectPostman",
     "onCommand:postchat.detectCollections",
+    "onCommand:postchat.importFromUrl",
     "onView:postchatView"
   ],
   "main": "./out/extension.js",
@@ -76,6 +77,10 @@
       {
         "command": "postchat.detectCollections",
         "title": "Postchat: Detect Workspace Collections"
+      },
+      {
+        "command": "postchat.importFromUrl",
+        "title": "Postchat: Import Collection from URL"
       }
     ],
     "keybindings": [
