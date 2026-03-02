@@ -1,4 +1,5 @@
 import { CollectionSwitcher } from "./CollectionSwitcher";
+import type { SourceInfo, SourceStatus } from "./SourceManager";
 
 const PROVIDER_DISPLAY: Record<string, string> = {
   anthropic: "Anthropic",
@@ -19,6 +20,21 @@ function abbreviateModel(model: string): string {
   return model.replace(/-\d{8}$/, "");
 }
 
+function statusDotColor(status: SourceStatus): string {
+  switch (status) {
+    case "connected":
+      return "bg-green-500";
+    case "syncing":
+      return "bg-yellow-400 animate-pulse";
+    case "disconnected":
+      return "bg-gray-400";
+    case "error":
+      return "bg-red-500";
+    case "stale":
+      return "bg-orange-400";
+  }
+}
+
 type HeaderProps = {
   collections: CollectionSummary[];
   activeCollectionId: string | null;
@@ -27,6 +43,8 @@ type HeaderProps = {
   activeProvider?: string;
   activeModel?: string;
   isSettingsOpen: boolean;
+  isSourceManagerOpen: boolean;
+  activeSource: SourceInfo | null;
   onTabChange: (tab: "chat" | "explorer") => void;
   onLoadCollection: () => void;
   onSwitchCollection: (id: string) => void;
@@ -34,6 +52,7 @@ type HeaderProps = {
   onLoadEnvironment: () => void;
   onClearChat: () => void;
   onSettingsToggle: () => void;
+  onSourceManagerToggle: () => void;
 };
 
 export function Header({
@@ -44,13 +63,16 @@ export function Header({
   activeProvider,
   activeModel,
   isSettingsOpen,
+  isSourceManagerOpen,
+  activeSource,
   onTabChange,
   onLoadCollection,
   onSwitchCollection,
   onRemoveCollection,
   onLoadEnvironment,
   onClearChat,
-  onSettingsToggle
+  onSettingsToggle,
+  onSourceManagerToggle
 }: HeaderProps): JSX.Element {
   const providerLabel = activeProvider ? (PROVIDER_DISPLAY[activeProvider] ?? activeProvider) : null;
   const modelLabel = activeModel ? abbreviateModel(activeModel) : null;
@@ -83,19 +105,58 @@ export function Header({
               onLoadCollection={onLoadCollection}
             />
           ) : (
-            <div className="flex items-center justify-center rounded border border-dashed border-vscode-panelBorder bg-vscode-inputBg/40 px-3 py-2">
+            <div className="flex items-center justify-center gap-2 rounded border border-dashed border-vscode-panelBorder bg-vscode-inputBg/40 px-3 py-2">
               <button
                 type="button"
-                onClick={onLoadCollection}
+                onClick={onSourceManagerToggle}
                 className="rounded bg-vscode-buttonBg px-2.5 py-1.5 text-xs font-medium text-vscode-buttonFg hover:bg-vscode-buttonHover focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder"
               >
-                Load Collection
+                Connect API
               </button>
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Source Manager toggle */}
+          <button
+            type="button"
+            onClick={onSourceManagerToggle}
+            aria-label="Source Manager"
+            title="Manage collection sources"
+            className={[
+              "relative rounded border p-1.5 focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder",
+              isSourceManagerOpen
+                ? "border-vscode-focusBorder bg-vscode-buttonBg text-vscode-buttonFg"
+                : "border-vscode-inputBorder bg-vscode-inputBg text-vscode-inputFg hover:bg-vscode-listHover"
+            ].join(" ")}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 11a9 9 0 0 1 9 9" />
+              <path d="M4 4a16 16 0 0 1 16 16" />
+              <circle cx="5" cy="19" r="1" />
+            </svg>
+            {activeSource ? (
+              <span
+                className={[
+                  "absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-vscode-editorBg",
+                  statusDotColor(activeSource.status)
+                ].join(" ")}
+              />
+            ) : null}
+          </button>
+
           <button
             type="button"
             onClick={onLoadEnvironment}
@@ -167,13 +228,25 @@ export function Header({
         </div>
       </div>
 
+      {/* Active source status bar */}
+      {activeSource ? (
+        <div className="flex items-center gap-1.5 border-t border-vscode-panelBorder bg-vscode-inputBg/40 px-3 py-1">
+          <span className={["h-1.5 w-1.5 shrink-0 rounded-full", statusDotColor(activeSource.status)].join(" ")} />
+          <span className="truncate text-[10px] text-vscode-descriptionFg">
+            {activeSource.label}
+            {activeSource.status === "syncing" ? " — Syncing..." : ""}
+            {activeSource.status === "error" ? " — Error" : ""}
+          </span>
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-1 border-t border-vscode-panelBorder bg-[var(--vscode-editorGroupHeader-tabsBackground)] px-2">
         <button
           type="button"
           onClick={() => onTabChange("chat")}
           className={tabButtonClasses("chat")}
         >
-          💬 Chat
+          Chat
         </button>
         <button
           type="button"
@@ -182,7 +255,7 @@ export function Header({
           onClick={() => onTabChange("explorer")}
           className={tabButtonClasses("explorer", !isExplorerAvailable)}
         >
-          🗂️ Explorer
+          Explorer
         </button>
       </div>
 
@@ -190,7 +263,7 @@ export function Header({
         <div className="flex items-center gap-1.5 border-t border-vscode-panelBorder bg-vscode-inputBg/40 px-3 py-1">
           <span className="text-xs text-vscode-descriptionFg">
             {providerLabel}
-            <span className="mx-1 opacity-50">·</span>
+            <span className="mx-1 opacity-50">&middot;</span>
             {modelLabel}
           </span>
         </div>

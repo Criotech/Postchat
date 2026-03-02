@@ -17,6 +17,7 @@ import {
   buildSystemPrompt,
   getProvider
 } from "./llmClient";
+import type { SourceRegistry } from "./integration/sourceRegistry";
 import { filterCollectionMarkdown } from "./collectionFilter";
 import { findRequestByKeyword } from "./collectionLookup";
 import { SmartContextService, type ContextFilterResult } from "./contextFilter/smartContextService";
@@ -73,7 +74,14 @@ type IncomingWebviewMessage =
   // | { command: "confirmSend"; originalMessage?: string }
   // | { command: "cancelSend" }
   | { command: "clearChat" }
-  | { command: "updateConfig"; key: string; value: string };
+  | { command: "updateConfig"; key: string; value: string }
+  | { command: "getSourceData" }
+  | { command: "connectPostman" }
+  | { command: "importFromUrl" }
+  | { command: "detectCollections" }
+  | { command: "trackWithGit" }
+  | { command: "activateSource"; sourceId: string }
+  | { command: "refreshSource" };
 
 export class PostchatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "postchatView";
@@ -85,6 +93,7 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private selectedExplorerEndpointId: string | null = null;
   private readonly tokenTracker = new TokenTracker();
   private readonly smartContext = new SmartContextService();
+  private sourceRegistry: SourceRegistry | null = null;
   // private hasSecretSendApproval = false;
   // private pendingConfirmedMessage: string | null = null;
 
@@ -145,6 +154,23 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     this.postCollectionChanged("collectionLoaded", collectionId, state);
     this.postActiveCollectionData();
     this.requestTabProvider.notifyCollectionReloaded();
+  }
+
+  public setSourceRegistry(registry: SourceRegistry): void {
+    this.sourceRegistry = registry;
+  }
+
+  public postSourceData(): void {
+    if (!this.sourceRegistry) {
+      return;
+    }
+    const sources = this.sourceRegistry.getAllSources();
+    const activeSource = this.sourceRegistry.getActiveSource();
+    this.postToWebview({
+      command: "sourcesChanged",
+      sources,
+      activeSource
+    });
   }
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -445,6 +471,35 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "updateConfig":
         await this.handleUpdateConfig(message.key, message.value);
+        break;
+      case "getSourceData":
+        this.postSourceData();
+        break;
+      case "connectPostman":
+        void vscode.commands.executeCommand("postchat.connectPostman");
+        break;
+      case "importFromUrl":
+        void vscode.commands.executeCommand("postchat.importFromUrl");
+        break;
+      case "detectCollections":
+        void vscode.commands.executeCommand("postchat.detectCollections");
+        break;
+      case "trackWithGit":
+        void vscode.commands.executeCommand("postchat.trackWithGit");
+        break;
+      case "activateSource":
+        if (this.sourceRegistry) {
+          void this.sourceRegistry.activate(message.sourceId).then(() => {
+            this.postSourceData();
+          });
+        }
+        break;
+      case "refreshSource":
+        if (this.sourceRegistry) {
+          void this.sourceRegistry.refreshActive().then(() => {
+            this.postSourceData();
+          });
+        }
         break;
       default:
         break;

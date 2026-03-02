@@ -38,11 +38,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ─── SOURCE REGISTRY ─────────────────────────────────────
   const registry = new SourceRegistry(context);
+  viewProvider.setSourceRegistry(registry);
 
   // TODO (INT-04): Instantiate and register WatchedFileSource
 
   registry.onCollectionChange((collection) => {
     viewProvider?.setCollection(collection);
+    viewProvider?.postSourceData();
   });
 
   void registry.restoreLastSession().then((restored) => {
@@ -200,6 +202,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (selected) {
         const result = await registry.activate(selected.sourceId);
+        viewProvider?.postSourceData();
         if (!result.success) {
           void vscode.window.showErrorMessage(
             `Postchat: Failed to activate source: ${result.error ?? "Unknown error"}`
@@ -213,6 +216,7 @@ export function activate(context: vscode.ExtensionContext): void {
     "postchat.detectCollections",
     async () => {
       const loaded = await autoDetectAndRegister(registry);
+      viewProvider?.postSourceData();
       if (!loaded) {
         void vscode.window.showInformationMessage(
           "Postchat: No API collections or specs found in this workspace."
@@ -231,6 +235,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       registry.register(source);
       const result = await registry.activate(source.getSourceInfo().id);
+      viewProvider?.postSourceData();
       if (result.success) {
         void vscode.window.showInformationMessage(
           `Postchat: Connected to "${source.getSourceInfo().label}" from Postman Cloud.`
@@ -253,6 +258,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       registry.register(source);
       const result = await registry.activate(source.getSourceInfo().id);
+      viewProvider?.postSourceData();
       if (result.success) {
         void vscode.window.showInformationMessage(
           `Postchat: Loaded collection from ${source.getSourceInfo().label}.`
@@ -275,6 +281,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       registry.register(source);
       const result = await registry.activate(source.getSourceInfo().id);
+      viewProvider?.postSourceData();
       if (result.success) {
         void vscode.window.showInformationMessage(
           `Postchat: Now tracking "${source.getSourceInfo().label}" via Git.`

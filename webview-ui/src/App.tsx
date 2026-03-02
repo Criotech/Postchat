@@ -4,6 +4,8 @@ import { ExplorerPanel } from "./components/ExplorerPanel";
 import { Header } from "./components/Header";
 import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
 import type { ConfigValues } from "./components/SettingsPanel";
+import { SourceManager } from "./components/SourceManager";
+import type { SourceInfo } from "./components/SourceManager";
 import type { TokenUsage, ContextFilterStats } from "./components/TokenStatusBar";
 import { useBridgeListener } from "./hooks/useBridgeListener";
 import { BridgeProvider, useBridge } from "./lib/explorerBridge";
@@ -114,7 +116,9 @@ type IncomingMessage =
       ollamaModel: string;
     }
   | { command: "tokenUsageUpdated"; usage: TokenUsage }
-  | { command: "contextFilterStats"; stats: ContextFilterStats };
+  | { command: "contextFilterStats"; stats: ContextFilterStats }
+  | { command: "sourceStatusUpdate"; source: SourceInfo }
+  | { command: "sourcesChanged"; sources: SourceInfo[]; activeSource: SourceInfo | null };
 
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -376,6 +380,9 @@ function AppContent(): JSX.Element {
   const [isCollectionParsing, setIsCollectionParsing] = useState(false);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage>(EMPTY_TOKEN_USAGE);
   const [contextStats, setContextStats] = useState<ContextFilterStats | null>(null);
+  const [isSourceManagerOpen, setIsSourceManagerOpen] = useState(false);
+  const [activeSource, setActiveSource] = useState<SourceInfo | null>(null);
+  const [registeredSources, setRegisteredSources] = useState<SourceInfo[]>([]);
 
   const [programmaticInput, setProgrammaticInput] = useState<string | null>(null);
   const [programmaticSendRequest, setProgrammaticSendRequest] = useState<ProgrammaticSendRequest | null>(null);
@@ -677,6 +684,13 @@ function AppContent(): JSX.Element {
         case "contextFilterStats":
           setContextStats(message.stats);
           break;
+        case "sourceStatusUpdate":
+          setActiveSource(message.source);
+          break;
+        case "sourcesChanged":
+          setRegisteredSources(message.sources);
+          setActiveSource(message.activeSource);
+          break;
         case "clearChat":
           setMessages([]);
           setError(undefined);
@@ -763,6 +777,7 @@ function AppContent(): JSX.Element {
 
   useEffect(() => {
     vscode.postMessage({ command: "getCollectionData" });
+    vscode.postMessage({ command: "getSourceData" });
   }, []);
 
   useEffect(() => {
@@ -924,6 +939,34 @@ function AppContent(): JSX.Element {
     setIsSettingsOpen((prev) => !prev);
   }, []);
 
+  const handleSourceManagerToggle = useCallback(() => {
+    setIsSourceManagerOpen((prev) => !prev);
+  }, []);
+
+  const handleConnectPostman = useCallback(() => {
+    vscode.postMessage({ command: "connectPostman" });
+  }, []);
+
+  const handleImportFromUrl = useCallback(() => {
+    vscode.postMessage({ command: "importFromUrl" });
+  }, []);
+
+  const handleDetectWorkspace = useCallback(() => {
+    vscode.postMessage({ command: "detectCollections" });
+  }, []);
+
+  const handleTrackWithGit = useCallback(() => {
+    vscode.postMessage({ command: "trackWithGit" });
+  }, []);
+
+  const handleActivateSource = useCallback((sourceId: string) => {
+    vscode.postMessage({ command: "activateSource", sourceId });
+  }, []);
+
+  const handleRefreshSource = useCallback(() => {
+    vscode.postMessage({ command: "refreshSource" });
+  }, []);
+
   const handleTabChange = useCallback(
     (tab: AppTab) => {
       if (tab === "explorer" && !activeCollection && !isCollectionParsing) {
@@ -997,6 +1040,8 @@ function AppContent(): JSX.Element {
         activeProvider={activeProvider}
         activeModel={activeModel}
         isSettingsOpen={isSettingsOpen}
+        isSourceManagerOpen={isSourceManagerOpen}
+        activeSource={activeSource}
         onTabChange={handleTabChange}
         onLoadCollection={handleLoadCollection}
         onSwitchCollection={handleSwitchCollection}
@@ -1004,9 +1049,23 @@ function AppContent(): JSX.Element {
         onLoadEnvironment={handleLoadEnvironment}
         onClearChat={handleClearChat}
         onSettingsToggle={handleSettingsToggle}
+        onSourceManagerToggle={handleSourceManagerToggle}
       />
 
-      <main className="flex-1 overflow-hidden">
+      <main className="relative flex-1 overflow-hidden">
+        <SourceManager
+          isOpen={isSourceManagerOpen}
+          activeSource={activeSource}
+          sources={registeredSources}
+          onClose={() => setIsSourceManagerOpen(false)}
+          onConnectPostman={handleConnectPostman}
+          onImportFromUrl={handleImportFromUrl}
+          onDetectWorkspace={handleDetectWorkspace}
+          onTrackWithGit={handleTrackWithGit}
+          onActivateSource={handleActivateSource}
+          onRefreshSource={handleRefreshSource}
+          onLoadCollection={handleLoadCollection}
+        />
         {activeTab === "chat" ? (
           <div className="h-full transition-opacity duration-150 postchat-fade-in">
             <ChatPanel
