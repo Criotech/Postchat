@@ -31,7 +31,6 @@ type ChatPanelProps = {
     { request: ExecutableRequest; result: ExecutionResult; endpointId?: string | null }
   >;
   pendingExecutionName: string | null;
-  onRunRequest: (method: string, url: string) => void;
   onSend: (text: string) => void;
   hasCollection: boolean;
   parsedCollection: ParsedCollection | null;
@@ -60,7 +59,6 @@ export function ChatPanel({
   isThinking,
   executionResults,
   pendingExecutionName,
-  onRunRequest,
   onSend,
   hasCollection,
   parsedCollection,
@@ -100,7 +98,6 @@ export function ChatPanel({
         isThinking={isThinking}
         executionResults={executionResults}
         pendingExecutionName={pendingExecutionName}
-        onRunRequest={onRunRequest}
         parsedCollection={parsedCollection}
       />
 

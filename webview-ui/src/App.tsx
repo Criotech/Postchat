@@ -254,96 +254,6 @@ function endpointToExecutable(
   };
 }
 
-function normalizePath(path: string): string {
-  const [withoutQuery] = path.split("?");
-  const trimmed = withoutQuery.trim();
-  if (trimmed === "/") {
-    return "/";
-  }
-  return trimmed.replace(/\/+$/, "");
-}
-
-function splitPathSegments(path: string): string[] {
-  return normalizePath(path)
-    .split("/")
-    .filter((segment) => segment.length > 0);
-}
-
-function endpointPathMatches(collectionPath: string, candidatePath: string): boolean {
-  const normalizedCollectionPath = normalizePath(collectionPath);
-  const normalizedCandidatePath = normalizePath(candidatePath);
-
-  if (normalizedCollectionPath === normalizedCandidatePath) {
-    return true;
-  }
-
-  const collectionSegments = splitPathSegments(normalizedCollectionPath);
-  const candidateSegments = splitPathSegments(normalizedCandidatePath);
-  if (collectionSegments.length !== candidateSegments.length) {
-    return false;
-  }
-
-  for (let index = 0; index < collectionSegments.length; index += 1) {
-    const collectionSegment = collectionSegments[index];
-    const candidateSegment = candidateSegments[index];
-    const isCollectionParam =
-      (collectionSegment.startsWith("{") && collectionSegment.endsWith("}")) ||
-      collectionSegment.startsWith(":");
-    const isCandidateParam =
-      (candidateSegment.startsWith("{") && candidateSegment.endsWith("}")) ||
-      candidateSegment.startsWith(":");
-
-    if (isCollectionParam || isCandidateParam) {
-      continue;
-    }
-    if (collectionSegment !== candidateSegment) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function getPathFromUrl(url: string): string | null {
-  const trimmed = url.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  if (trimmed.startsWith("/")) {
-    return normalizePath(trimmed);
-  }
-
-  try {
-    return normalizePath(new URL(trimmed).pathname || "/");
-  } catch {
-    return null;
-  }
-}
-
-function findMatchingEndpointByMethodAndUrl(
-  collection: ParsedCollection | null,
-  method: string,
-  url: string
-): ParsedEndpoint | null {
-  if (!collection) {
-    return null;
-  }
-
-  const candidatePath = getPathFromUrl(url);
-  if (!candidatePath) {
-    return null;
-  }
-
-  const normalizedMethod = method.toUpperCase();
-  return (
-    collection.endpoints.find(
-      (endpoint) =>
-        endpoint.method === normalizedMethod && endpointPathMatches(endpoint.path, candidatePath)
-    ) ?? null
-  );
-}
-
 function AppContent(): JSX.Element {
   const { emit } = useBridge();
 
@@ -802,21 +712,6 @@ function AppContent(): JSX.Element {
     vscode.postMessage({ command: "executeRequest", request });
   }, []);
 
-  const handleRunRequestFromBubble = useCallback(
-    (method: string, url: string) => {
-      const requestName = `${method} ${url}`;
-      const matchingEndpoint = findMatchingEndpointByMethodAndUrl(parsedCollection, method, url);
-      if (matchingEndpoint) {
-        bridgeRequestEndpointMapRef.current[requestName] = matchingEndpoint.id;
-        bridgeRequestEndpointMapRef.current[matchingEndpoint.name] = matchingEndpoint.id;
-      }
-
-      setPendingExecution({ name: requestName, method, url, headers: {} });
-      vscode.postMessage({ command: "executeRequestByEndpoint", method, url });
-    },
-    [parsedCollection]
-  );
-
   const handleSend = useCallback(
     (text: string) => {
       const trimmed = text.trim();
@@ -1081,7 +976,6 @@ function AppContent(): JSX.Element {
               isThinking={isThinking}
               executionResults={executionResults}
               pendingExecutionName={pendingExecution?.name ?? null}
-              onRunRequest={handleRunRequestFromBubble}
               onSend={handleSend}
               hasCollection={Boolean(activeCollectionId)}
               parsedCollection={parsedCollection}

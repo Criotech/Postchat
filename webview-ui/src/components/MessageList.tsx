@@ -15,7 +15,6 @@ type MessageListProps = {
     { request: ExecutableRequest; result: ExecutionResult; endpointId?: string | null }
   >;
   pendingExecutionName: string | null;
-  onRunRequest?: (method: string, url: string) => void;
   parsedCollection: ParsedCollection | null;
 };
 
@@ -143,7 +142,6 @@ export function MessageList({
   isThinking,
   executionResults,
   pendingExecutionName,
-  onRunRequest,
   parsedCollection
 }: MessageListProps): JSX.Element {
   const { emit } = useBridge();
@@ -222,7 +220,6 @@ export function MessageList({
           <MessageBubble
             key={message.id}
             message={message}
-            onRunRequest={onRunRequest}
             parsedCollection={parsedCollection}
             resolvedEndpointId={assistantEndpointMap.get(message.id) ?? null}
           />
