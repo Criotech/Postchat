@@ -6,6 +6,7 @@ import type { ParsedEndpoint } from "./specParser";
 import { formatQuerySummary } from "./contextFilter/queryAnalyzer";
 import { SourceRegistry } from "./integration";
 import { setupPostmanCloud } from "./integration/sources/postmanCloudSetup";
+import { autoDetectAndRegister } from "./integration/sources/workspaceSource";
 
 function isParsedEndpoint(value: unknown): value is ParsedEndpoint {
   if (!value || typeof value !== "object") {
@@ -44,7 +45,11 @@ export function activate(context: vscode.ExtensionContext): void {
     viewProvider?.setCollection(collection);
   });
 
-  void registry.restoreLastSession();
+  void registry.restoreLastSession().then((restored) => {
+    if (!restored) {
+      void autoDetectAndRegister(registry);
+    }
+  });
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PostchatViewProvider.viewType, viewProvider)
@@ -204,6 +209,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const detectCollectionsCommand = vscode.commands.registerCommand(
+    "postchat.detectCollections",
+    async () => {
+      const loaded = await autoDetectAndRegister(registry);
+      if (!loaded) {
+        void vscode.window.showInformationMessage(
+          "Postchat: No API collections or specs found in this workspace."
+        );
+      }
+    }
+  );
+
   const connectPostmanCommand = vscode.commands.registerCommand(
     "postchat.connectPostman",
     async () => {
@@ -233,6 +250,7 @@ export function activate(context: vscode.ExtensionContext): void {
     closeAllRequestTabsCommand,
     debugContextCommand,
     manageSourcesCommand,
+    detectCollectionsCommand,
     connectPostmanCommand,
     registry,
     { dispose: () => requestTabProvider.closeAllTabs() }
