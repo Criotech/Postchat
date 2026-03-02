@@ -52,7 +52,7 @@ export function buildHistoryOnlyContext(
     return { markdown: '', matchedEndpoints: 0 };
   }
 
-  // Build a minimal context with just the matched endpoints as summaries
+  // Build context with full detail for previously discussed endpoints
   const lines: string[] = [
     `# ${collection.title} API (conversation context)`,
     `Base URL: \`${collection.baseUrl}\``,
@@ -60,7 +60,15 @@ export function buildHistoryOnlyContext(
     '## Previously discussed endpoints',
   ];
 
-  for (const ep of matched.slice(0, 5)) {
+  // First 3 get full detail (including request body), rest get summaries
+  const fullSlice = matched.slice(0, 3);
+  const summarySlice = matched.slice(3, 5);
+
+  for (const ep of fullSlice) {
+    lines.push(formatEndpointFull(ep));
+    lines.push('');
+  }
+  for (const ep of summarySlice) {
     lines.push(formatEndpointSummary(ep));
   }
 
@@ -70,23 +78,23 @@ export function buildHistoryOnlyContext(
 // ─── TOKEN BUDGET CONSTANTS ───────────────────────────────────
 
 const TOKEN_BUDGETS = {
-  conservative: 2000,
-  balanced: 4000,
-  generous: 8000,
+  conservative: 4000,
+  balanced: 8000,
+  generous: 12000,
 
-  fullDetail: 400,
-  summary: 60,
+  fullDetail: 600,
+  summary: 80,
   nameOnly: 20,
 };
 
 const TIER_THRESHOLDS = {
-  fullDetail: 0.8,
-  summary: 0.3,
+  fullDetail: 0.5,
+  summary: 0.15,
 };
 
 const MAX_ENDPOINTS_PER_TIER = {
-  fullDetail: 5,
-  summary: 10,
+  fullDetail: 8,
+  summary: 12,
 };
 
 // ─── TYPES ─────────────────────────────────────────────────────
@@ -131,22 +139,36 @@ function assignTiers(
 
   const maxScore = results[0].score;
 
-  // Single-endpoint high-confidence shortcut
+  // Single-endpoint high-confidence shortcut: top result gets full detail,
+  // keep a few related endpoints as summaries for context
   if (query.isSingleEndpointQuery && results.length > 0 && results[0].score / maxScore > 0.9) {
-    return [
+    const tiered: TieredEndpoint[] = [
       {
         endpoint: results[0].endpoint,
         tier: 'full' as ContextTier,
         score: results[0].score,
         estimatedTokens: TOKEN_BUDGETS.fullDetail,
       },
-      ...results.slice(1).map(r => ({
+    ];
+    // Keep up to 3 related endpoints as summaries instead of excluding all
+    const relatedSlice = results.slice(1, 4);
+    for (const r of relatedSlice) {
+      tiered.push({
+        endpoint: r.endpoint,
+        tier: 'summary' as ContextTier,
+        score: r.score,
+        estimatedTokens: TOKEN_BUDGETS.summary,
+      });
+    }
+    for (const r of results.slice(4)) {
+      tiered.push({
         endpoint: r.endpoint,
         tier: 'excluded' as ContextTier,
         score: r.score,
         estimatedTokens: 0,
-      })),
-    ];
+      });
+    }
+    return tiered;
   }
 
   // List endpoints intent: everything goes to summary
@@ -247,8 +269,8 @@ function formatEndpointFull(endpoint: ParsedEndpoint): string {
   // Request body
   if (endpoint.requestBody) {
     const contentType = endpoint.requestContentType || 'application/json';
-    const truncatedBody = endpoint.requestBody.length > 300
-      ? endpoint.requestBody.slice(0, 300) + '...'
+    const truncatedBody = endpoint.requestBody.length > 800
+      ? endpoint.requestBody.slice(0, 800) + '...'
       : endpoint.requestBody;
     lines.push(`- **Request Body** (${contentType}):`);
     lines.push('```json');

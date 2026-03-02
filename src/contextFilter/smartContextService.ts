@@ -157,9 +157,12 @@ function determineBudgetMode(
   if (query.isGlobalQuery) { return 'generous'; }
   if (query.intent === 'compare_endpoints') { return 'generous'; }
   if (query.intent === 'understand_auth') { return 'generous'; }
+  if (query.intent === 'understand_schema') { return 'generous'; }
+  if (query.intent === 'list_endpoints') { return 'generous'; }
 
-  if (query.isSingleEndpointQuery) { return 'conservative'; }
-  if (query.intent === 'run_request') { return 'conservative'; }
+  if (query.isSingleEndpointQuery) { return 'balanced'; }
+  if (query.intent === 'run_request') { return 'balanced'; }
+  if (query.intent === 'generate_code') { return 'balanced'; }
 
   return 'balanced';
 }

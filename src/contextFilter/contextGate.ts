@@ -36,6 +36,14 @@ const API_SIGNAL_TERMS = [
   'schema', 'model', 'field', 'property',
   'curl', 'fetch', 'http', 'rest',
   'collection', 'swagger', 'openapi', 'postman',
+  // Action verbs that imply API operations
+  'create', 'update', 'delete', 'remove', 'add', 'get', 'list',
+  'send', 'submit', 'upload', 'download', 'login', 'register',
+  'search', 'filter', 'sort', 'paginate',
+  // Resource nouns commonly found in APIs
+  'user', 'order', 'product', 'item', 'account', 'payment',
+  'session', 'message', 'file', 'image', 'invoice',
+  'subscription', 'role', 'team', 'workspace', 'permission',
 ];
 
 const API_METHOD_RE = /\b(GET|POST|PUT|PATCH|DELETE)\b/;
@@ -79,7 +87,7 @@ export function shouldSendContext(
 
   // Very short messages (1-2 words) without API signals are conversational
   const wordCount = trimmed.split(/\s+/).length;
-  if (wordCount <= 2 && hasNoApiSignals(trimmed)) {
+  if (wordCount <= 3 && hasNoApiSignals(trimmed)) {
     // Exception: if there's a path or method, it's API-related
     if (!API_PATH_RE.test(trimmed) && !API_METHOD_RE.test(trimmed)) {
       return 'none';
@@ -106,9 +114,9 @@ export function shouldSendContext(
     return history.length > 0 ? 'history' : 'none';
   }
 
-  // If the message has no API signals at all and is relatively short,
+  // If the message has no API signals at all and is very short,
   // it's probably conversational
-  if (wordCount <= 6 && hasNoApiSignals(trimmed)) {
+  if (wordCount <= 4 && hasNoApiSignals(trimmed)) {
     return 'none';
   }
 

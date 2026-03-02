@@ -281,18 +281,15 @@ export function searchIndex(
 
   // Score each document
   const scored: SearchResult[] = [];
-  const useEarlyTermination = index.totalDocs > 500;
-  const earlyTermCheckInterval = 100;
-  const earlyTermScoreThreshold = 5.0;
+  const useEarlyTermination = index.totalDocs > 1000;
+  const earlyTermCheckInterval = 200;
+  const earlyTermMinDocs = 500; // scan at least this many before early exit
 
   for (let docIdx = 0; docIdx < index.documents.length; docIdx++) {
-    // Early termination for very large collections (simplified WAND)
-    if (useEarlyTermination && docIdx > 0 && docIdx % earlyTermCheckInterval === 0) {
-      if (scored.length >= topK) {
-        scored.sort((a, b) => b.score - a.score);
-        if (scored[0].score > earlyTermScoreThreshold) {
-          break;
-        }
+    // Early termination for very large collections — only after scanning enough docs
+    if (useEarlyTermination && docIdx >= earlyTermMinDocs && docIdx % earlyTermCheckInterval === 0) {
+      if (scored.length >= topK * 2) {
+        break;
       }
     }
 
