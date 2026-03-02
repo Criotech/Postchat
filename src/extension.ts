@@ -4,6 +4,7 @@ import { PostchatViewProvider } from "./postchatViewProvider";
 import { RequestTabProvider } from "./requestTabProvider";
 import type { ParsedEndpoint } from "./specParser";
 import { formatQuerySummary } from "./contextFilter/queryAnalyzer";
+import { SourceRegistry } from "./integration";
 
 function isParsedEndpoint(value: unknown): value is ParsedEndpoint {
   if (!value || typeof value !== "object") {
@@ -30,6 +31,20 @@ export function activate(context: vscode.ExtensionContext): void {
     llmClient
   );
   viewProvider = new PostchatViewProvider(context.extensionUri, requestTabProvider);
+
+  // ─── SOURCE REGISTRY ─────────────────────────────────────
+  const registry = new SourceRegistry(context);
+
+  // TODO (INT-02): Instantiate and register PostmanCloudSource
+  // TODO (INT-03): Instantiate and register UrlImportSource
+  // TODO (INT-04): Instantiate and register WatchedFileSource
+  // TODO (INT-05): Instantiate and register GitTrackedSource
+
+  registry.onCollectionChange((collection) => {
+    viewProvider?.setCollection(collection);
+  });
+
+  void registry.restoreLastSession();
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PostchatViewProvider.viewType, viewProvider)
@@ -156,12 +171,47 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const manageSourcesCommand = vscode.commands.registerCommand(
+    "postchat.manageSources",
+    async () => {
+      const sources = registry.getAllSources();
+      if (sources.length === 0) {
+        void vscode.window.showInformationMessage(
+          "Postchat: No collection sources registered."
+        );
+        return;
+      }
+
+      const items = sources.map((source) => ({
+        label: source.label,
+        description: `${source.type} · ${source.status}`,
+        detail: source.description,
+        sourceId: source.id
+      }));
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: "Select a collection source to activate"
+      });
+
+      if (selected) {
+        const result = await registry.activate(selected.sourceId);
+        if (!result.success) {
+          void vscode.window.showErrorMessage(
+            `Postchat: Failed to activate source: ${result.error ?? "Unknown error"}`
+          );
+        }
+      }
+    }
+  );
+
   context.subscriptions.push(
     startCommand,
     openRequestTabCommand,
     runCurrentTabCommand,
     closeAllRequestTabsCommand,
     debugContextCommand,
+    manageSourcesCommand,
+    registry,
     { dispose: () => requestTabProvider.closeAllTabs() }
   );
 }

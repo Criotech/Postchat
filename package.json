@@ -37,6 +37,7 @@
     "onCommand:postchat.runCurrentTab",
     "onCommand:postchat.closeAllRequestTabs",
     "onCommand:postchat.debugContext",
+    "onCommand:postchat.manageSources",
     "onView:postchatView"
   ],
   "main": "./out/extension.js",
@@ -61,6 +62,10 @@
       {
         "command": "postchat.debugContext",
         "title": "Postchat: Debug Context Filter"
+      },
+      {
+        "command": "postchat.manageSources",
+        "title": "Postchat: Manage Collection Sources"
       }
     ],
     "keybindings": [

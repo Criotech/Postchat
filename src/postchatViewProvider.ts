@@ -122,6 +122,31 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     return true;
   }
 
+  public setCollection(collection: ParsedCollection): void {
+    const collectionId = `source://${collection.title}`;
+    const state = this.createCollectionState(collection);
+
+    if (!this.collections.has(collectionId) && this.collections.size >= MAX_LOADED_COLLECTIONS) {
+      for (const [id] of this.collections) {
+        if (id !== this.activeCollectionId) {
+          this.collections.delete(id);
+          break;
+        }
+      }
+    }
+
+    this.collections.set(collectionId, state);
+    this.activeCollectionId = collectionId;
+
+    this.smartContext.clearCollection();
+    this.smartContext.setCollection(state.resolvedParsedCollection);
+
+    this.ensureSelectedEndpointIsValid();
+    this.postCollectionChanged("collectionLoaded", collectionId, state);
+    this.postActiveCollectionData();
+    this.requestTabProvider.notifyCollectionReloaded();
+  }
+
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
 
