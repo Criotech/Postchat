@@ -41,6 +41,7 @@
     "onCommand:postchat.connectPostman",
     "onCommand:postchat.detectCollections",
     "onCommand:postchat.importFromUrl",
+    "onCommand:postchat.trackWithGit",
     "onView:postchatView"
   ],
   "main": "./out/extension.js",
@@ -81,6 +82,10 @@
       {
         "command": "postchat.importFromUrl",
         "title": "Postchat: Import Collection from URL"
+      },
+      {
+        "command": "postchat.trackWithGit",
+        "title": "Postchat: Track Collection with Git"
       }
     ],
     "keybindings": [

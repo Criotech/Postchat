@@ -7,6 +7,7 @@ import { formatQuerySummary } from "./contextFilter/queryAnalyzer";
 import { SourceRegistry } from "./integration";
 import { setupPostmanCloud } from "./integration/sources/postmanCloudSetup";
 import { setupUrlSource } from "./integration/sources/urlSource";
+import { setupGitSource } from "./integration/sources/gitSource";
 import { autoDetectAndRegister } from "./integration/sources/workspaceSource";
 
 function isParsedEndpoint(value: unknown): value is ParsedEndpoint {
@@ -39,7 +40,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const registry = new SourceRegistry(context);
 
   // TODO (INT-04): Instantiate and register WatchedFileSource
-  // TODO (INT-05): Instantiate and register GitTrackedSource
 
   registry.onCollectionChange((collection) => {
     viewProvider?.setCollection(collection);
@@ -265,6 +265,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const trackWithGitCommand = vscode.commands.registerCommand(
+    "postchat.trackWithGit",
+    async () => {
+      const source = await setupGitSource();
+      if (!source) {
+        return;
+      }
+
+      registry.register(source);
+      const result = await registry.activate(source.getSourceInfo().id);
+      if (result.success) {
+        void vscode.window.showInformationMessage(
+          `Postchat: Now tracking "${source.getSourceInfo().label}" via Git.`
+        );
+      } else {
+        void vscode.window.showErrorMessage(
+          `Postchat: Failed to load collection: ${result.error ?? "Unknown error"}`
+        );
+      }
+    }
+  );
+
   context.subscriptions.push(
     startCommand,
     openRequestTabCommand,
@@ -275,6 +297,7 @@ export function activate(context: vscode.ExtensionContext): void {
     detectCollectionsCommand,
     connectPostmanCommand,
     importFromUrlCommand,
+    trackWithGitCommand,
     registry,
     { dispose: () => requestTabProvider.closeAllTabs() }
   );
