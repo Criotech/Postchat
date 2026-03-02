@@ -38,6 +38,7 @@
     "onCommand:postchat.closeAllRequestTabs",
     "onCommand:postchat.debugContext",
     "onCommand:postchat.manageSources",
+    "onCommand:postchat.connectPostman",
     "onView:postchatView"
   ],
   "main": "./out/extension.js",
@@ -66,6 +67,10 @@
       {
         "command": "postchat.manageSources",
         "title": "Postchat: Manage Collection Sources"
+      },
+      {
+        "command": "postchat.connectPostman",
+        "title": "Postchat: Connect to Postman Cloud"
       }
     ],
     "keybindings": [

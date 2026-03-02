@@ -5,6 +5,7 @@ import { RequestTabProvider } from "./requestTabProvider";
 import type { ParsedEndpoint } from "./specParser";
 import { formatQuerySummary } from "./contextFilter/queryAnalyzer";
 import { SourceRegistry } from "./integration";
+import { setupPostmanCloud } from "./integration/sources/postmanCloudSetup";
 
 function isParsedEndpoint(value: unknown): value is ParsedEndpoint {
   if (!value || typeof value !== "object") {
@@ -35,7 +36,6 @@ export function activate(context: vscode.ExtensionContext): void {
   // ─── SOURCE REGISTRY ─────────────────────────────────────
   const registry = new SourceRegistry(context);
 
-  // TODO (INT-02): Instantiate and register PostmanCloudSource
   // TODO (INT-03): Instantiate and register UrlImportSource
   // TODO (INT-04): Instantiate and register WatchedFileSource
   // TODO (INT-05): Instantiate and register GitTrackedSource
@@ -204,6 +204,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const connectPostmanCommand = vscode.commands.registerCommand(
+    "postchat.connectPostman",
+    async () => {
+      const source = await setupPostmanCloud(context);
+      if (!source) {
+        return;
+      }
+
+      registry.register(source);
+      const result = await registry.activate(source.getSourceInfo().id);
+      if (result.success) {
+        void vscode.window.showInformationMessage(
+          `Postchat: Connected to "${source.getSourceInfo().label}" from Postman Cloud.`
+        );
+      } else {
+        void vscode.window.showErrorMessage(
+          `Postchat: Failed to fetch collection: ${result.error ?? "Unknown error"}`
+        );
+      }
+    }
+  );
+
   context.subscriptions.push(
     startCommand,
     openRequestTabCommand,
@@ -211,6 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
     closeAllRequestTabsCommand,
     debugContextCommand,
     manageSourcesCommand,
+    connectPostmanCommand,
     registry,
     { dispose: () => requestTabProvider.closeAllTabs() }
   );
