@@ -4,7 +4,9 @@ import { ExplorerPanel } from "./components/ExplorerPanel";
 import { Header } from "./components/Header";
 import type { ExecutableRequest, ExecutionResult } from "./components/RequestResult";
 import type { ConfigValues } from "./components/SettingsPanel";
-import type { TokenUsage } from "./components/TokenStatusBar";
+import { SourceManager } from "./components/SourceManager";
+import type { SourceInfo } from "./components/SourceManager";
+import type { TokenUsage, ContextFilterStats } from "./components/TokenStatusBar";
 import { useBridgeListener } from "./hooks/useBridgeListener";
 import { BridgeProvider, useBridge } from "./lib/explorerBridge";
 import { resolveSlashCommand } from "./lib/slashCommands";
@@ -113,7 +115,10 @@ type IncomingMessage =
       ollamaEndpoint: string;
       ollamaModel: string;
     }
-  | { command: "tokenUsageUpdated"; usage: TokenUsage };
+  | { command: "tokenUsageUpdated"; usage: TokenUsage }
+  | { command: "contextFilterStats"; stats: ContextFilterStats }
+  | { command: "sourceStatusUpdate"; source: SourceInfo }
+  | { command: "sourcesChanged"; sources: SourceInfo[]; activeSource: SourceInfo | null };
 
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -249,96 +254,6 @@ function endpointToExecutable(
   };
 }
 
-function normalizePath(path: string): string {
-  const [withoutQuery] = path.split("?");
-  const trimmed = withoutQuery.trim();
-  if (trimmed === "/") {
-    return "/";
-  }
-  return trimmed.replace(/\/+$/, "");
-}
-
-function splitPathSegments(path: string): string[] {
-  return normalizePath(path)
-    .split("/")
-    .filter((segment) => segment.length > 0);
-}
-
-function endpointPathMatches(collectionPath: string, candidatePath: string): boolean {
-  const normalizedCollectionPath = normalizePath(collectionPath);
-  const normalizedCandidatePath = normalizePath(candidatePath);
-
-  if (normalizedCollectionPath === normalizedCandidatePath) {
-    return true;
-  }
-
-  const collectionSegments = splitPathSegments(normalizedCollectionPath);
-  const candidateSegments = splitPathSegments(normalizedCandidatePath);
-  if (collectionSegments.length !== candidateSegments.length) {
-    return false;
-  }
-
-  for (let index = 0; index < collectionSegments.length; index += 1) {
-    const collectionSegment = collectionSegments[index];
-    const candidateSegment = candidateSegments[index];
-    const isCollectionParam =
-      (collectionSegment.startsWith("{") && collectionSegment.endsWith("}")) ||
-      collectionSegment.startsWith(":");
-    const isCandidateParam =
-      (candidateSegment.startsWith("{") && candidateSegment.endsWith("}")) ||
-      candidateSegment.startsWith(":");
-
-    if (isCollectionParam || isCandidateParam) {
-      continue;
-    }
-    if (collectionSegment !== candidateSegment) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function getPathFromUrl(url: string): string | null {
-  const trimmed = url.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  if (trimmed.startsWith("/")) {
-    return normalizePath(trimmed);
-  }
-
-  try {
-    return normalizePath(new URL(trimmed).pathname || "/");
-  } catch {
-    return null;
-  }
-}
-
-function findMatchingEndpointByMethodAndUrl(
-  collection: ParsedCollection | null,
-  method: string,
-  url: string
-): ParsedEndpoint | null {
-  if (!collection) {
-    return null;
-  }
-
-  const candidatePath = getPathFromUrl(url);
-  if (!candidatePath) {
-    return null;
-  }
-
-  const normalizedMethod = method.toUpperCase();
-  return (
-    collection.endpoints.find(
-      (endpoint) =>
-        endpoint.method === normalizedMethod && endpointPathMatches(endpoint.path, candidatePath)
-    ) ?? null
-  );
-}
-
 function AppContent(): JSX.Element {
   const { emit } = useBridge();
 
@@ -374,6 +289,10 @@ function AppContent(): JSX.Element {
   const [tabToastMessage, setTabToastMessage] = useState<string | undefined>();
   const [isCollectionParsing, setIsCollectionParsing] = useState(false);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage>(EMPTY_TOKEN_USAGE);
+  const [contextStats, setContextStats] = useState<ContextFilterStats | null>(null);
+  const [isSourceManagerOpen, setIsSourceManagerOpen] = useState(false);
+  const [activeSource, setActiveSource] = useState<SourceInfo | null>(null);
+  const [registeredSources, setRegisteredSources] = useState<SourceInfo[]>([]);
 
   const [programmaticInput, setProgrammaticInput] = useState<string | null>(null);
   const [programmaticSendRequest, setProgrammaticSendRequest] = useState<ProgrammaticSendRequest | null>(null);
@@ -672,6 +591,16 @@ function AppContent(): JSX.Element {
         case "tokenUsageUpdated":
           setTokenUsage(message.usage);
           break;
+        case "contextFilterStats":
+          setContextStats(message.stats);
+          break;
+        case "sourceStatusUpdate":
+          setActiveSource(message.source);
+          break;
+        case "sourcesChanged":
+          setRegisteredSources(message.sources);
+          setActiveSource(message.activeSource);
+          break;
         case "clearChat":
           setMessages([]);
           setError(undefined);
@@ -688,6 +617,7 @@ function AppContent(): JSX.Element {
           bridgeRequestEndpointMapRef.current = {};
           setIsCollectionParsing(false);
           setTokenUsage(EMPTY_TOKEN_USAGE);
+          setContextStats(null);
           clearParsingTimer();
           break;
         case "requestStarted":
@@ -757,6 +687,7 @@ function AppContent(): JSX.Element {
 
   useEffect(() => {
     vscode.postMessage({ command: "getCollectionData" });
+    vscode.postMessage({ command: "getSourceData" });
   }, []);
 
   useEffect(() => {
@@ -780,21 +711,6 @@ function AppContent(): JSX.Element {
     });
     vscode.postMessage({ command: "executeRequest", request });
   }, []);
-
-  const handleRunRequestFromBubble = useCallback(
-    (method: string, url: string) => {
-      const requestName = `${method} ${url}`;
-      const matchingEndpoint = findMatchingEndpointByMethodAndUrl(parsedCollection, method, url);
-      if (matchingEndpoint) {
-        bridgeRequestEndpointMapRef.current[requestName] = matchingEndpoint.id;
-        bridgeRequestEndpointMapRef.current[matchingEndpoint.name] = matchingEndpoint.id;
-      }
-
-      setPendingExecution({ name: requestName, method, url, headers: {} });
-      vscode.postMessage({ command: "executeRequestByEndpoint", method, url });
-    },
-    [parsedCollection]
-  );
 
   const handleSend = useCallback(
     (text: string) => {
@@ -904,6 +820,7 @@ function AppContent(): JSX.Element {
     setProgrammaticInput(null);
     setProgrammaticSendRequest(null);
     setTokenUsage(EMPTY_TOKEN_USAGE);
+    setContextStats(null);
     bridgeRequestEndpointMapRef.current = {};
     vscode.postMessage({ command: "clearChat" });
   }, [clearParsingTimer]);
@@ -915,6 +832,34 @@ function AppContent(): JSX.Element {
 
   const handleSettingsToggle = useCallback(() => {
     setIsSettingsOpen((prev) => !prev);
+  }, []);
+
+  const handleSourceManagerToggle = useCallback(() => {
+    setIsSourceManagerOpen((prev) => !prev);
+  }, []);
+
+  const handleConnectPostman = useCallback(() => {
+    vscode.postMessage({ command: "connectPostman" });
+  }, []);
+
+  const handleImportFromUrl = useCallback(() => {
+    vscode.postMessage({ command: "importFromUrl" });
+  }, []);
+
+  const handleDetectWorkspace = useCallback(() => {
+    vscode.postMessage({ command: "detectCollections" });
+  }, []);
+
+  const handleTrackWithGit = useCallback(() => {
+    vscode.postMessage({ command: "trackWithGit" });
+  }, []);
+
+  const handleActivateSource = useCallback((sourceId: string) => {
+    vscode.postMessage({ command: "activateSource", sourceId });
+  }, []);
+
+  const handleRefreshSource = useCallback(() => {
+    vscode.postMessage({ command: "refreshSource" });
   }, []);
 
   const handleTabChange = useCallback(
@@ -990,6 +935,8 @@ function AppContent(): JSX.Element {
         activeProvider={activeProvider}
         activeModel={activeModel}
         isSettingsOpen={isSettingsOpen}
+        isSourceManagerOpen={isSourceManagerOpen}
+        activeSource={activeSource}
         onTabChange={handleTabChange}
         onLoadCollection={handleLoadCollection}
         onSwitchCollection={handleSwitchCollection}
@@ -997,9 +944,23 @@ function AppContent(): JSX.Element {
         onLoadEnvironment={handleLoadEnvironment}
         onClearChat={handleClearChat}
         onSettingsToggle={handleSettingsToggle}
+        onSourceManagerToggle={handleSourceManagerToggle}
       />
 
-      <main className="flex-1 overflow-hidden">
+      <main className="relative flex-1 overflow-hidden">
+        <SourceManager
+          isOpen={isSourceManagerOpen}
+          activeSource={activeSource}
+          sources={registeredSources}
+          onClose={() => setIsSourceManagerOpen(false)}
+          onConnectPostman={handleConnectPostman}
+          onImportFromUrl={handleImportFromUrl}
+          onDetectWorkspace={handleDetectWorkspace}
+          onTrackWithGit={handleTrackWithGit}
+          onActivateSource={handleActivateSource}
+          onRefreshSource={handleRefreshSource}
+          onLoadCollection={handleLoadCollection}
+        />
         {activeTab === "chat" ? (
           <div className="h-full transition-opacity duration-150 postchat-fade-in">
             <ChatPanel
@@ -1015,7 +976,6 @@ function AppContent(): JSX.Element {
               isThinking={isThinking}
               executionResults={executionResults}
               pendingExecutionName={pendingExecution?.name ?? null}
-              onRunRequest={handleRunRequestFromBubble}
               onSend={handleSend}
               hasCollection={Boolean(activeCollectionId)}
               parsedCollection={parsedCollection}
@@ -1024,6 +984,7 @@ function AppContent(): JSX.Element {
               onProgrammaticSendConsumed={() => setProgrammaticSendRequest(null)}
               tokenUsage={tokenUsage}
               activeProvider={activeProvider}
+              contextStats={contextStats}
               // isSecretsModalOpen={isSecretsModalOpen}
               // secretFindings={secretFindings}
               // onConfirmSend={handleConfirmSend}

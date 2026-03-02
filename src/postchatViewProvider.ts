@@ -17,8 +17,10 @@ import {
   buildSystemPrompt,
   getProvider
 } from "./llmClient";
+import type { SourceRegistry } from "./integration/sourceRegistry";
 import { filterCollectionMarkdown } from "./collectionFilter";
 import { findRequestByKeyword } from "./collectionLookup";
+import { SmartContextService, type ContextFilterResult } from "./contextFilter/smartContextService";
 import { generateSuggestions } from "./promptSuggester";
 import { executeRequest, type ExecutableRequest } from "./requestExecutor";
 import { RequestTabProvider } from "./requestTabProvider";
@@ -72,7 +74,14 @@ type IncomingWebviewMessage =
   // | { command: "confirmSend"; originalMessage?: string }
   // | { command: "cancelSend" }
   | { command: "clearChat" }
-  | { command: "updateConfig"; key: string; value: string };
+  | { command: "updateConfig"; key: string; value: string }
+  | { command: "getSourceData" }
+  | { command: "connectPostman" }
+  | { command: "importFromUrl" }
+  | { command: "detectCollections" }
+  | { command: "trackWithGit" }
+  | { command: "activateSource"; sourceId: string }
+  | { command: "refreshSource" };
 
 export class PostchatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "postchatView";
@@ -83,6 +92,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
   private activeCollectionId: string | null = null;
   private selectedExplorerEndpointId: string | null = null;
   private readonly tokenTracker = new TokenTracker();
+  private readonly smartContext = new SmartContextService();
+  private sourceRegistry: SourceRegistry | null = null;
   // private hasSecretSendApproval = false;
   // private pendingConfirmedMessage: string | null = null;
 
@@ -93,6 +104,10 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
   public getResolvedParsedCollection(): ParsedCollection | null {
     return this.getActiveCollection()?.resolvedParsedCollection ?? null;
+  }
+
+  public getSmartContext(): SmartContextService {
+    return this.smartContext;
   }
 
   public getActiveEnvironment(): Record<string, string> {
@@ -114,6 +129,48 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
     this.requestTabProvider.openRequestTab(endpoint);
     return true;
+  }
+
+  public setCollection(collection: ParsedCollection): void {
+    const collectionId = `source://${collection.title}`;
+    const state = this.createCollectionState(collection);
+
+    if (!this.collections.has(collectionId) && this.collections.size >= MAX_LOADED_COLLECTIONS) {
+      for (const [id] of this.collections) {
+        if (id !== this.activeCollectionId) {
+          this.collections.delete(id);
+          break;
+        }
+      }
+    }
+
+    this.collections.set(collectionId, state);
+    this.activeCollectionId = collectionId;
+
+    this.smartContext.clearCollection();
+    this.smartContext.setCollection(state.resolvedParsedCollection);
+
+    this.ensureSelectedEndpointIsValid();
+    this.postCollectionChanged("collectionLoaded", collectionId, state);
+    this.postActiveCollectionData();
+    this.requestTabProvider.notifyCollectionReloaded();
+  }
+
+  public setSourceRegistry(registry: SourceRegistry): void {
+    this.sourceRegistry = registry;
+  }
+
+  public postSourceData(): void {
+    if (!this.sourceRegistry) {
+      return;
+    }
+    const sources = this.sourceRegistry.getAllSources();
+    const activeSource = this.sourceRegistry.getActiveSource();
+    this.postToWebview({
+      command: "sourcesChanged",
+      sources,
+      activeSource
+    });
   }
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -415,6 +472,35 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       case "updateConfig":
         await this.handleUpdateConfig(message.key, message.value);
         break;
+      case "getSourceData":
+        this.postSourceData();
+        break;
+      case "connectPostman":
+        void vscode.commands.executeCommand("postchat.connectPostman");
+        break;
+      case "importFromUrl":
+        void vscode.commands.executeCommand("postchat.importFromUrl");
+        break;
+      case "detectCollections":
+        void vscode.commands.executeCommand("postchat.detectCollections");
+        break;
+      case "trackWithGit":
+        void vscode.commands.executeCommand("postchat.trackWithGit");
+        break;
+      case "activateSource":
+        if (this.sourceRegistry) {
+          void this.sourceRegistry.activate(message.sourceId).then(() => {
+            this.postSourceData();
+          });
+        }
+        break;
+      case "refreshSource":
+        if (this.sourceRegistry) {
+          void this.sourceRegistry.refreshActive().then(() => {
+            this.postSourceData();
+          });
+        }
+        break;
       default:
         break;
     }
@@ -455,6 +541,8 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
       this.activeCollectionId = selectedPath;
       // this.hasSecretSendApproval = false;
       // this.pendingConfirmedMessage = null;
+
+      this.smartContext.setCollection(next.resolvedParsedCollection);
 
       this.ensureSelectedEndpointIsValid();
 
@@ -512,6 +600,10 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     this.activeCollectionId = collectionId;
     // this.hasSecretSendApproval = false;
     // this.pendingConfirmedMessage = null;
+
+    this.smartContext.clearCollection();
+    this.smartContext.setCollection(collection.resolvedParsedCollection);
+
     this.ensureSelectedEndpointIsValid();
 
     this.postToWebview({ command: "showSuggestions", suggestions: [] });
@@ -532,11 +624,18 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
     this.collections.delete(collectionId);
 
     if (wasActive) {
+      this.smartContext.clearCollection();
       const nextActive = this.collections.keys().next();
       this.activeCollectionId = nextActive.done ? null : nextActive.value;
       // this.hasSecretSendApproval = false;
       // this.pendingConfirmedMessage = null;
       this.ensureSelectedEndpointIsValid();
+
+      // Set new active collection in smart context
+      const nextCollection = this.getActiveCollection();
+      if (nextCollection) {
+        this.smartContext.setCollection(nextCollection.resolvedParsedCollection);
+      }
     }
 
     this.postToWebview({
@@ -835,8 +934,43 @@ export class PostchatViewProvider implements vscode.WebviewViewProvider {
 
     try {
       const provider = getProvider(config);
-      const filteredMarkdown = filterCollectionMarkdown(active.markdown, userMessage);
-      const systemPrompt = buildSystemPrompt(filteredMarkdown);
+
+      // Smart context filtering: replace old filterCollectionMarkdown
+      let contextMarkdown: string;
+      let contextStats: ContextFilterResult["stats"] | null = null;
+      try {
+        const contextResult = this.smartContext.getContextForQuery(
+          userMessage,
+          this.conversationHistory,
+        );
+        contextMarkdown = contextResult.contextMarkdown;
+        contextStats = contextResult.stats;
+      } catch {
+        // Fallback to old filter if smart context fails
+        contextMarkdown = filterCollectionMarkdown(active.markdown, userMessage);
+      }
+
+      const systemPrompt = buildSystemPrompt(contextMarkdown);
+
+      // Log context filter stats
+      if (contextStats) {
+        console.log(
+          `[Postchat Context] ${contextStats.sentFull} full, ` +
+          `${contextStats.sentSummary} summary, ` +
+          `${contextStats.excluded} excluded | ` +
+          `~${contextStats.estimatedInputTokens} tokens | ` +
+          `${contextStats.estimatedCostSavingPercent}% saving | ` +
+          `${contextStats.processingTimeMs}ms`
+        );
+      }
+
+      // Send stats to webview for token display
+      if (contextStats) {
+        this.postToWebview({
+          command: "contextFilterStats",
+          stats: contextStats
+        });
+      }
 
       const response = await provider.sendMessage({
         systemPrompt,

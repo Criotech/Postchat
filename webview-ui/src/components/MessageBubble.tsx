@@ -9,7 +9,6 @@ import { CodeBlock } from "./CodeBlock";
 
 type MessageBubbleProps = {
   message: Message;
-  onRunRequest?: (method: string, url: string) => void;
   parsedCollection?: ParsedCollection | null;
   resolvedEndpointId?: string | null;
 };
@@ -169,7 +168,7 @@ function extractEndpointMentions(text: string): ExtractedEndpointMention[] {
   return matches;
 }
 
-export function MessageBubble({ message, onRunRequest, parsedCollection, resolvedEndpointId }: MessageBubbleProps): JSX.Element {
+export function MessageBubble({ message, parsedCollection, resolvedEndpointId }: MessageBubbleProps): JSX.Element {
   const { emit } = useBridge();
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -192,11 +191,20 @@ export function MessageBubble({ message, onRunRequest, parsedCollection, resolve
     return extractEndpointMentions(message.text);
   }, [isSystem, isUser, message.text, parsedCollection]);
 
-  const handleRunRequest = useCallback(() => {
-    if (endpointMatch && onRunRequest) {
-      onRunRequest(endpointMatch[1].toUpperCase(), endpointMatch[2]);
-    }
-  }, [endpointMatch, onRunRequest]);
+  // Resolve the first detected endpoint match to a collection endpoint ID
+  const endpointMatchId = useMemo(() => {
+    if (!endpointMatch || !parsedCollection) { return null; }
+    const method = endpointMatch[1].toUpperCase();
+    const rawUrl = endpointMatch[2];
+    const mentionPath = normalizeMentionedPath(rawUrl);
+    const matched = parsedCollection.endpoints.find(
+      (ep) => ep.method === method && endpointPathMatches(ep.path, mentionPath)
+    );
+    return matched?.id ?? null;
+  }, [endpointMatch, parsedCollection]);
+
+  // Primary endpoint ID: prefer resolvedEndpointId, fall back to endpointMatchId
+  const primaryEndpointId = resolvedEndpointId || endpointMatchId;
 
   const handleViewInExplorer = useCallback(
     (mention: ExtractedEndpointMention) => {
@@ -247,11 +255,11 @@ export function MessageBubble({ message, onRunRequest, parsedCollection, resolve
     [mentionEndpointMap]
   );
 
-  const handleViewResolvedRequest = useCallback(() => {
-    if (resolvedEndpointId) {
-      vscode.postMessage({ command: "openRequestTab", endpointId: resolvedEndpointId });
+  const handleViewPrimaryRequest = useCallback(() => {
+    if (primaryEndpointId) {
+      vscode.postMessage({ command: "openRequestTab", endpointId: primaryEndpointId });
     }
-  }, [resolvedEndpointId]);
+  }, [primaryEndpointId]);
 
   return (
     <article
@@ -276,28 +284,19 @@ export function MessageBubble({ message, onRunRequest, parsedCollection, resolve
           {message.text}
         </ReactMarkdown>
       )}
-      {!isUser && !isSystem && (resolvedEndpointId || (endpointMatch && onRunRequest) || mentionEndpointMap.size > 0) ? (
+      {!isUser && !isSystem && (primaryEndpointId || mentionEndpointMap.size > 0) ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {endpointMatch && onRunRequest ? (
+          {primaryEndpointId ? (
             <button
               type="button"
-              onClick={handleRunRequest}
-              className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
-            >
-              ▶ Run this request
-            </button>
-          ) : null}
-          {resolvedEndpointId ? (
-            <button
-              type="button"
-              onClick={handleViewResolvedRequest}
+              onClick={handleViewPrimaryRequest}
               className="rounded bg-vscode-buttonSecondaryBg px-2 py-1 text-xs text-vscode-buttonSecondaryFg hover:bg-vscode-buttonSecondaryHover"
             >
               View Request
             </button>
           ) : null}
           {endpointMentions.map((mention) =>
-            mentionEndpointMap.has(mention.label) && mentionEndpointMap.get(mention.label) !== resolvedEndpointId ? (
+            mentionEndpointMap.has(mention.label) && mentionEndpointMap.get(mention.label) !== primaryEndpointId ? (
               <button
                 key={mention.label}
                 type="button"
